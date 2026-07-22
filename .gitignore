@@ -1,0 +1,8 @@
+# build output
+/build/
+# runtime / logs
+*.log
+*.pid
+# editor / OS
+.DS_Store
+*.swp
