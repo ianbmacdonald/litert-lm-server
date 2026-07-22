@@ -1,0 +1,5 @@
+litert-lm-server
+Copyright 2026 Ian MacDonald
+
+This product includes software developed as part of the Lemonade SDK ecosystem.
+It links LiteRT-LM (github.com/google-ai-edge/LiteRT-LM), which is licensed under the Apache License 2.0.

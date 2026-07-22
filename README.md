@@ -94,3 +94,7 @@ and multi-turn history are supported.
   verbatim in `message.content` (Qwen3 emits it); strip it downstream if unwanted.
 - **Usage** counts are computed with the engine tokenizer
   (`litert_lm_engine_tokenize`) over the input and output text.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE). Links LiteRT-LM (Apache-2.0); self-contained gateway bundles additionally ship glibc/libstdc++/libgcc runtime libraries under LGPL-2.1 / GPL-3.0-with-GCC-runtime-exception (notices included).
