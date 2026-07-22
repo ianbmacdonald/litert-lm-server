@@ -99,11 +99,26 @@ installed** on imac (`apt`/`pip install patchelf`); the `run` wrapper needs no p
   (`*.litertlm.xnnpack_cache_<...>`, ~339 MB) next to the model — the model dir must be
   **writable** on the gateway (or pre-warm the cache and ship it read-only).
 - **Recommendation:** do NOT bake the ~0.5 GB model into the gateway image. Pull it at
-  first run into a writable data volume, e.g. `/var/lib/litert-lm/models/`, and start
-  the server with `--model /var/lib/litert-lm/models/qwen3_0_6b_mixed_int4.litertlm`.
-  Keep the bundle (binary+libs, tens of MB) separate from the model payload so image
-  and model version independently. If pinned/offline, mount the model read-only and
-  point XNNPACK cache at a writable tmp via the model dir being writable.
+  first run into a writable data volume and point `--model` at it. Keep the bundle
+  (binary+libs, tens of MB) separate from the model payload so image and model version
+  independently. If pinned/offline, mount the model read-only and point XNNPACK cache at
+  a writable tmp via the model dir being writable.
+- **That directory must be PERSISTENT, NON-TMPFS, and hold ~1 GB** (~0.5 GB model +
+  ~339 MB XNNPACK cache, plus headroom). An earlier revision of this file suggested
+  `/var/lib/litert-lm/models/`. **That is wrong on an OpenWrt gateway**, where `/var` is
+  **tmpfs (RAM)** and the NAND overlay is far too small to hold either the model or the
+  cache. The packaging side defaults the uci model path to a provisioned mount
+  (`/mnt/litert-lm/models`) and confirms the real mount at deploy.
+- **Where that mount comes from differs between dev and production, and the server does
+  not care — but whoever provisions it does:**
+  - *Development / bring-up (Qualcomm ipq807x boards):* assume a **USB key**. These
+    boards have no spare onboard storage for a payload this size.
+  - *Production prpl devices:* **eMMC** — persistent onboard storage is available, so no
+    external media is required.
+
+  Either way the server takes a path and nothing else: keep the mount decision in the
+  package/uci layer and out of the binary. The only hard requirements are persistent,
+  writable, non-tmpfs, ~1 GB.
 
 ## Deliverable 3 — License (SHIPPING A BUNDLE — read this)
 
