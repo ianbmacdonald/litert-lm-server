@@ -1,8 +1,10 @@
 # litert-lm-server aarch64-glibc self-contained bundle — MANIFEST (BC_087)
 
-Status: **toolchain de-risked and proven; bundle artifact PENDING** a compiler-family
-pivot in the engine cross-build (see "Toolchain status" below). Arch/license/layout/
-model-provisioning design below is final and independent of that pivot (same sysroot).
+Status: **BUNDLE SHIPPED (v0.1.0, 2026-07-23).** The compiler-family pivot landed: a
+clang-19 aarch64 cc_toolchain (`bazel/cross_aarch64_clang/`) over the same ARM-GNU 11.3
+sysroot cleared the NEON `target("dotprod")` wall; engine, C-ABI lib and CMake server are
+all readelf-proven AArch64. Bundle assembled per this manifest, qemu-smoke-tested, and
+published as a GitHub release asset (sha256 in the release notes).
 
 Target: prpl gateway (musl host) carrying its own glibc aarch64 runtime. Host build
 box: imac (x86_64, 14 GB RAM). Cross, CPU/serialized inference.
@@ -64,17 +66,22 @@ Layout (versioned tarball `litert-lm-server-aarch64-glibc-<ver>.tar.gz`):
     litert-lm-server-aarch64-glibc-<ver>/
       bin/litert-lm-server              # aarch64 ELF, patched interpreter+rpath
       lib/liblitert-lm.so               # aarch64 C-ABI engine (from //c:litert-lm)
+      lib/libGemmaModelConstraintProvider.so  # prebuilt aarch64 (LiteRT-LM runfiles) — NEEDED by liblitert-lm.so
       lib/ld-linux-aarch64.so.1         # bundled glibc loader
       lib/libc.so.6  libm.so.6  libdl.so.2  libpthread.so.0  librt.so.1
       lib/libstdc++.so.6  libgcc_s.so.1
       run                               # wrapper (below)
+      licenses/                         # Apache-2.0 (LiteRT-LM + server), glibc/GCC-runtime notices, ARM-GNU manifest
       BUNDLE-MANIFEST.md
 
 Runtime libs are copied from the ARM-GNU 11.3 aarch64 sysroot
 (`@aarch64_linux_toolchain/aarch64-none-linux-gnu/`): loader + `libc/lib64/*` for
-glibc, `lib64/{libstdc++.so.6,libgcc_s.so.1}` for the C++/GCC runtime. The exact
-`NEEDED`/`readelf -d` set of the final `bin/litert-lm-server` + `lib/liblitert-lm.so`
-must be re-checked after Step 2 and any additionally-referenced `.so` added.
+glibc, `lib64/{libstdc++.so.6,libgcc_s.so.1}` for the C++/GCC runtime. The exact `NEEDED` closure was re-checked on the final artifacts (2026-07-23):
+`bin/litert-lm-server` -> liblitert-lm.so, libstdc++, libm, libgcc_s, libc;
+`liblitert-lm.so` -> libGemmaModelConstraintProvider.so (+ glibc set + loader);
+`libGemmaModelConstraintProvider.so` -> libm, libpthread, librt, libdl, libc.
+All members are in `lib/`; the build-box absolute RPATH on the server binary is
+replaced by `$ORIGIN/../lib`, and both engine libs get rpath `$ORIGIN`.
 
 **rpath/interpreter scheme (musl-host-safe):**
 - `patchelf --set-interpreter '$ORIGIN/../lib/ld-linux-aarch64.so.1' bin/litert-lm-server`
@@ -87,8 +94,10 @@ must be re-checked after Step 2 and any additionally-referenced `.so` added.
       exec "$d/lib/ld-linux-aarch64.so.1" --library-path "$d/lib" "$d/bin/litert-lm-server" "$@"
 
 This makes the bundle self-contained: it carries its own glibc loader + libc, so it
-runs on a **musl** gateway host with no glibc installed. NOTE: `patchelf` is **not yet
-installed** on imac (`apt`/`pip install patchelf`); the `run` wrapper needs no patchelf.
+runs on a **musl** gateway host with no glibc installed. `patchelf` 0.18 + `qemu-user` are installed on imac (2026-07-23); the shipped bundle is
+patchelf-patched AND carries the `run` wrapper. Note the `$ORIGIN` PT_INTERP is not
+kernel-expanded on direct exec — the `run` wrapper (loader-explicit) is the supported
+entrypoint on the gateway.
 
 ## Deliverable 2 — `.litertlm` model provisioning
 
@@ -103,22 +112,13 @@ installed** on imac (`apt`/`pip install patchelf`); the `run` wrapper needs no p
   (binary+libs, tens of MB) separate from the model payload so image and model version
   independently. If pinned/offline, mount the model read-only and point XNNPACK cache at
   a writable tmp via the model dir being writable.
-- **That directory must be PERSISTENT, NON-TMPFS, and hold ~1 GB** (~0.5 GB model +
-  ~339 MB XNNPACK cache, plus headroom). An earlier revision of this file suggested
-  `/var/lib/litert-lm/models/`. **That is wrong on an OpenWrt gateway**, where `/var` is
-  **tmpfs (RAM)** and the NAND overlay is far too small to hold either the model or the
-  cache. The packaging side defaults the uci model path to a provisioned mount
-  (`/mnt/litert-lm/models`) and confirms the real mount at deploy.
-- **Where that mount comes from differs between dev and production, and the server does
-  not care — but whoever provisions it does:**
-  - *Development / bring-up (Qualcomm ipq807x boards):* assume a **USB key**. These
-    boards have no spare onboard storage for a payload this size.
-  - *Production prpl devices:* **eMMC** — persistent onboard storage is available, so no
-    external media is required.
-
-  Either way the server takes a path and nothing else: keep the mount decision in the
-  package/uci layer and out of the binary. The only hard requirements are persistent,
-  writable, non-tmpfs, ~1 GB.
+- **The target directory must be PERSISTENT, NON-TMPFS and hold ~1 GB** (~0.5 GB model +
+  ~339 MB XNNPACK cache, plus headroom). An earlier revision of this manifest suggested
+  `/var/lib/litert-lm/models/`; that is **wrong on an OpenWrt gateway**, where `/var` is
+  **tmpfs (RAM)** and the NAND overlay is far too small. On the ipq807x CPE this needs
+  external or data-partition storage (USB or a mounted data volume) — prpl-harness
+  defaults the uci model path to a provisioned mount (`/mnt/litert-lm/models`) and will
+  confirm the real CPE mount at deploy. Corrected per prpl-harness#BC_090.
 
 ## Deliverable 3 — License (SHIPPING A BUNDLE — read this)
 
@@ -151,8 +151,11 @@ installed** on imac (`apt`/`pip install patchelf`); the `run` wrapper needs no p
 
 ## Tarball sha256
 
-**PENDING** — produced once Step 2 emits the aarch64 `liblitert-lm.so` and Step 3 the
-aarch64 `litert-lm-server` binary (both blocked on the clang-toolchain pivot above).
+Published per release: the authoritative sha256 for each
+`litert-lm-server-aarch64-glibc-<ver>.tar.gz` is stated in the GitHub release notes of
+the tag that ships it (and mirrored in the prpl feed pin). v0.1.0 built 2026-07-23 from
+LITERT_REF 622f1f3c / clang-19 cross toolchain; qemu-aarch64 smoke-tested (health +
+chat completion) before publish.
 
 ---
 
