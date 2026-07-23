@@ -26,6 +26,20 @@ LiteRtLmEngine* g_engine = nullptr;
 std::string g_model_id = "litert-lm";
 std::mutex g_infer_mutex;  // serialize all inference through the single engine.
 
+// A streaming generation that produces no token and does not finish within this
+// window is treated as stalled: the request is cancelled so it cannot hold
+// g_infer_mutex forever and wedge every other request (the engine's own
+// blocking path already bounds the non-streaming case internally).
+constexpr std::chrono::seconds kStreamIdleTimeout{60};
+
+// Upper bound on a single request's generated tokens. Without it a client can
+// ask for billions and drive KV-cache/output allocation past what a gateway has.
+constexpr int kMaxOutputTokensCeiling = 8192;
+
+// Reject request bodies larger than this before parsing. A 1-2 GB gateway must
+// not try to buffer an unbounded POST.
+constexpr size_t kMaxPayloadBytes = 4 * 1024 * 1024;
+
 std::string now_id() {
   static std::atomic<uint64_t> counter{0};
   std::mt19937_64 rng(std::random_device{}());
@@ -133,6 +147,7 @@ std::unique_ptr<RequestCtx> build_ctx(const json& body, std::string* err) {
            body["max_completion_tokens"].is_number_integer())
     max_tokens = body["max_completion_tokens"].get<int>();
   if (max_tokens <= 0) max_tokens = 512;
+  if (max_tokens > kMaxOutputTokensCeiling) max_tokens = kMaxOutputTokensCeiling;
 
   // Only TopP is implemented in this engine build.
   ctx->sp = litert_lm_sampler_params_create(kLiteRtLmSamplerTypeTopP);
@@ -240,16 +255,76 @@ void stream_callback(void* data, const char* chunk, bool is_final,
   st->cv.notify_all();
 }
 
-void handle_chat(const httplib::Request& req, httplib::Response& res) {
-  json body;
-  try {
-    body = json::parse(req.body);
-  } catch (...) {
-    res.status = 400;
-    res.set_content(R"({"error":{"message":"invalid JSON body"}})",
-                    "application/json");
-    return;
+// A terminal SSE frame carrying an OpenAI-shaped error, followed by [DONE].
+std::string sse_error_frame(const std::string& id, int64_t created,
+                            const std::string& message) {
+  json err{{"id", id},
+           {"object", "chat.completion.chunk"},
+           {"created", created},
+           {"model", g_model_id},
+           {"error", {{"message", message}}},
+           {"choices", json::array({json{{"index", 0},
+                                         {"delta", json::object()},
+                                         {"finish_reason", "error"}}})}};
+  return "data: " + err.dump() + "\n\ndata: [DONE]\n\n";
+}
+
+// Owns everything whose lifetime must outlive the engine's async worker thread,
+// and tears it down in the ONE safe order regardless of how the HTTP layer drops
+// the stream (return false, or destroying the provider mid-wait after a client
+// disconnect): cancel + JOIN the worker (conversation delete ->
+// ~SessionAdvanced -> WaitUntilDone) BEFORE freeing the StreamState the worker
+// calls back into, and BEFORE releasing g_infer_mutex. Encoding this as a
+// destructor removes all reliance on lambda-capture destruction order and keeps
+// the engine single-user until the worker is fully joined — a plain
+// unlock-in-the-provider would release the mutex while the cancelled worker is
+// still unwinding, letting a second request start concurrently on the engine.
+struct StreamHold {
+  std::shared_ptr<StreamState> st;
+  std::unique_ptr<RequestCtx> ctx;    // owns the LiteRT conversation
+  std::unique_lock<std::mutex> lock;  // holds g_infer_mutex for the request
+
+  ~StreamHold() {
+    if (ctx && ctx->conv)
+      litert_lm_conversation_cancel_process(ctx->conv);  // no-op if already done
+    ctx.reset();  // conversation delete blocks on WaitUntilDone: worker joined here
+    st.reset();   // safe now: the worker can no longer fire the callback
+    // lock releases last, AFTER the worker is joined.
   }
+};
+
+// Extract "prompt" from a legacy /v1/completions body into a chat body so both
+// endpoints share one code path. Accepts a string or an array of strings; a
+// tokenized (numeric/object) prompt is rejected rather than silently dropped.
+json completions_body_to_chat(const json& body) {
+  if (body.contains("messages"))
+    throw std::runtime_error(
+        "send either 'prompt' (completions) or 'messages' (chat), not both");
+  std::string prompt;
+  if (body.contains("prompt")) {
+    const json& p = body["prompt"];
+    if (p.is_string()) {
+      prompt = p.get<std::string>();
+    } else if (p.is_array()) {
+      for (const auto& part : p) {
+        if (!part.is_string())
+          throw std::runtime_error(
+              "tokenized ('prompt' as non-string array) is not supported");
+        prompt += part.get<std::string>();
+      }
+    } else {
+      throw std::runtime_error("'prompt' must be a string or array of strings");
+    }
+  }
+  json chat = body;
+  chat.erase("prompt");
+  chat["messages"] = json::array({json{{"role", "user"}, {"content", prompt}}});
+  return chat;
+}
+
+// Core handler. `req_body` is already-parsed and chat-shaped. Throws nlohmann
+// exceptions on malformed fields; handle_chat catches them and returns 400.
+void handle_chat_parsed(const json& body, httplib::Response& res) {
   bool stream = body.value("stream", false);
   std::string id = now_id();
   int64_t created = unix_now();
@@ -283,28 +358,31 @@ void handle_chat(const httplib::Request& req, httplib::Response& res) {
     return;
   }
 
-  // Streaming path. Hold engine mutex for the whole inference lifetime; the
-  // C ABI has no join, so a heap lock is released by the provider at is_final.
-  auto lock = std::make_shared<std::unique_lock<std::mutex>>(g_infer_mutex);
+  // Streaming path. A StreamHold owns the engine lock + conversation + stream
+  // state and guarantees teardown order (cancel+join the worker BEFORE releasing
+  // the engine), so the engine stays single-user and there is no callback UAF
+  // however the HTTP layer drops the stream.
+  auto hold = std::make_shared<StreamHold>();
+  hold->lock = std::unique_lock<std::mutex>(g_infer_mutex);
   std::string err;
   auto ctx_raw = build_ctx(body, &err);
   if (!ctx_raw) {
     res.status = 400;
     res.set_content(json{{"error", {{"message", err}}}}.dump(),
                     "application/json");
-    return;
+    return;  // ~StreamHold releases the lock (no conversation started).
   }
-  std::shared_ptr<RequestCtx> ctx = std::move(ctx_raw);
-  auto st = std::make_shared<StreamState>();
+  hold->ctx = std::move(ctx_raw);
+  hold->st = std::make_shared<StreamState>();
 
   int rc = litert_lm_conversation_send_message_stream(
-      ctx->conv, ctx->final_message_json.c_str(), nullptr, nullptr,
-      stream_callback, st.get());
+      hold->ctx->conv, hold->ctx->final_message_json.c_str(), nullptr, nullptr,
+      stream_callback, hold->st.get());
   if (rc != 0) {
     res.status = 500;
     res.set_content(R"({"error":{"message":"failed to start stream"}})",
                     "application/json");
-    return;
+    return;  // ~StreamHold cancels + joins + releases.
   }
 
   auto sent_role = std::make_shared<bool>(false);
@@ -312,71 +390,168 @@ void handle_chat(const httplib::Request& req, httplib::Response& res) {
 
   res.set_chunked_content_provider(
       "text/event-stream",
-      [id, created, st, ctx, lock, sent_role, done](
+      [id, created, hold, sent_role, done](
           size_t /*offset*/, httplib::DataSink& sink) -> bool {
         if (*done) return false;
+        StreamState* st = hold->st.get();
 
-        if (!*sent_role) {
-          *sent_role = true;
-          json first{
-              {"id", id},
-              {"object", "chat.completion.chunk"},
-              {"created", created},
-              {"model", g_model_id},
-              {"choices", json::array({json{
-                              {"index", 0},
-                              {"delta", json{{"role", "assistant"}}},
-                              {"finish_reason", nullptr}}})}};
-          std::string ev = "data: " + first.dump() + "\n\n";
-          sink.write(ev.data(), ev.size());
-        }
-
-        std::unique_lock<std::mutex> lk(st->m);
-        st->cv.wait(lk, [&] { return !st->chunks.empty() || st->finished; });
-        while (!st->chunks.empty()) {
-          std::string raw = std::move(st->chunks.front());
-          st->chunks.pop_front();
-          lk.unlock();
-          // Each streamed chunk is a full LiteRT message JSON; pull its text.
-          std::string piece = extract_text(raw.c_str());
-          json chunk{
-              {"id", id},
-              {"object", "chat.completion.chunk"},
-              {"created", created},
-              {"model", g_model_id},
-              {"choices", json::array({json{
-                              {"index", 0},
-                              {"delta", json{{"content", piece}}},
-                              {"finish_reason", nullptr}}})}};
-          std::string ev = "data: " + chunk.dump() + "\n\n";
-          sink.write(ev.data(), ev.size());
-          lk.lock();
-        }
-        if (st->finished) {
-          lk.unlock();
-          json fin{
-              {"id", id},
-              {"object", "chat.completion.chunk"},
-              {"created", created},
-              {"model", g_model_id},
-              {"choices", json::array({json{{"index", 0},
-                                            {"delta", json::object()},
-                                            {"finish_reason", "stop"}}})}};
-          std::string ev = "data: " + fin.dump() + "\n\ndata: [DONE]\n\n";
-          sink.write(ev.data(), ev.size());
+        // End the stream (optionally with an error frame). The engine cancel +
+        // worker join + mutex release happen in ~StreamHold when the HTTP layer
+        // drops this provider (right after we return false), in the one safe
+        // order; we also cancel here so a departed client stops the box now
+        // rather than at teardown. cancel is idempotent.
+        auto stop = [&](const std::string& err_message) -> bool {
+          litert_lm_conversation_cancel_process(hold->ctx->conv);
+          if (!err_message.empty()) {
+            // Best-effort error frame; must not throw (it can be called from the
+            // catch block below, and sse_error_frame allocates). A failure here
+            // just means the client does not get the error text — the stream
+            // still ends cleanly and ~StreamHold still tears down safely.
+            try {
+              std::string ev = sse_error_frame(id, created, err_message);
+              sink.write(ev.data(), ev.size());
+            } catch (...) {
+            }
+          }
           sink.done();
           *done = true;
-          if (lock->owns_lock()) lock->unlock();  // release engine for next req.
           return false;
+        };
+
+        // The provider runs AFTER handle_chat's try/catch has unwound, so any
+        // throw here (json::dump under memory pressure, etc.) must be contained
+        // as an SSE error frame — it cannot become a clean 500 once the
+        // text/event-stream response is already on the wire.
+        try {
+          if (!*sent_role) {
+            *sent_role = true;
+            json first{
+                {"id", id},
+                {"object", "chat.completion.chunk"},
+                {"created", created},
+                {"model", g_model_id},
+                {"choices", json::array({json{
+                                {"index", 0},
+                                {"delta", json{{"role", "assistant"}}},
+                                {"finish_reason", nullptr}}})}};
+            std::string ev = "data: " + first.dump() + "\n\n";
+            if (!sink.write(ev.data(), ev.size())) return stop("");
+          }
+
+          std::unique_lock<std::mutex> lk(st->m);
+          // Bounded wait: a stalled engine (no token, no is_final) must not park
+          // here forever holding the engine and wedging every other request.
+          // Wake on an error too: the engine may report one with neither a chunk
+          // nor is_final, and it must be surfaced below rather than mistimed as a
+          // stall for the full idle window.
+          if (!st->cv.wait_for(lk, kStreamIdleTimeout,
+                               [&] {
+                                 return !st->chunks.empty() || st->finished ||
+                                        !st->error.empty();
+                               })) {
+            lk.unlock();
+            return stop("inference stalled: no output within timeout");
+          }
+          while (!st->chunks.empty()) {
+            std::string raw = std::move(st->chunks.front());
+            st->chunks.pop_front();
+            lk.unlock();
+            // Each streamed chunk is a full LiteRT message JSON; pull its text.
+            std::string piece = extract_text(raw.c_str());
+            json chunk{
+                {"id", id},
+                {"object", "chat.completion.chunk"},
+                {"created", created},
+                {"model", g_model_id},
+                {"choices", json::array({json{
+                                {"index", 0},
+                                {"delta", json{{"content", piece}}},
+                                {"finish_reason", nullptr}}})}};
+            std::string ev = "data: " + chunk.dump() + "\n\n";
+            if (!sink.write(ev.data(), ev.size())) return stop("");
+            lk.lock();
+          }
+          // An engine error may arrive with or without is_final; surface it
+          // instead of emitting a false "stop".
+          if (!st->error.empty()) {
+            std::string msg = st->error;
+            lk.unlock();
+            return stop(msg);
+          }
+          if (st->finished) {
+            lk.unlock();
+            json fin{
+                {"id", id},
+                {"object", "chat.completion.chunk"},
+                {"created", created},
+                {"model", g_model_id},
+                {"choices", json::array({json{{"index", 0},
+                                              {"delta", json::object()},
+                                              {"finish_reason", "stop"}}})}};
+            std::string ev = "data: " + fin.dump() + "\n\ndata: [DONE]\n\n";
+            if (!sink.write(ev.data(), ev.size())) return stop("");
+            sink.done();
+            *done = true;
+            return false;  // ~StreamHold joins the worker + releases the engine.
+          }
+          return true;
+        } catch (const std::exception& e) {
+          return stop(std::string("stream error: ") + e.what());
         }
-        return true;
       });
+}
+
+void handle_chat(const httplib::Request& req, httplib::Response& res) {
+  json body;
+  try {
+    body = json::parse(req.body);
+  } catch (...) {
+    res.status = 400;
+    res.set_content(R"({"error":{"message":"invalid JSON body"}})",
+                    "application/json");
+    return;
+  }
+  // value()/get() on present-but-wrong-type fields throw; a malformed but
+  // syntactically-valid body must return 400, never escape to std::terminate.
+  try {
+    handle_chat_parsed(body, res);
+  } catch (const std::exception& e) {
+    res.status = 400;
+    res.set_content(
+        json{{"error", {{"message", std::string("bad request: ") + e.what()}}}}
+            .dump(),
+        "application/json");
+  }
+}
+
+void handle_completions(const httplib::Request& req, httplib::Response& res) {
+  json body;
+  try {
+    body = json::parse(req.body);
+  } catch (...) {
+    res.status = 400;
+    res.set_content(R"({"error":{"message":"invalid JSON body"}})",
+                    "application/json");
+    return;
+  }
+  try {
+    handle_chat_parsed(completions_body_to_chat(body), res);
+  } catch (const std::exception& e) {
+    res.status = 400;
+    res.set_content(
+        json{{"error", {{"message", std::string("bad request: ") + e.what()}}}}
+            .dump(),
+        "application/json");
+  }
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
-  std::string model_path, host = "0.0.0.0";
+  // Bind loopback by default: this is a backend the lemonade forwarder reaches
+  // on the same host. Exposing an unauthenticated inference API to the LAN of a
+  // gateway is not a default we want; --host can widen it deliberately.
+  std::string model_path, host = "127.0.0.1";
   int port = 8080;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -428,6 +603,25 @@ int main(int argc, char** argv) {
 
   httplib::Server svr;
 
+  svr.set_payload_max_length(kMaxPayloadBytes);
+
+  // Backstop: any exception escaping a handler returns 500 instead of
+  // terminating the process. handle_chat/handle_completions catch their own
+  // json errors as 400; this covers anything else.
+  svr.set_exception_handler(
+      [](const httplib::Request&, httplib::Response& res, std::exception_ptr ep) {
+        std::string msg = "internal error";
+        try {
+          std::rethrow_exception(ep);
+        } catch (const std::exception& e) {
+          msg = e.what();
+        } catch (...) {
+        }
+        res.status = 500;
+        res.set_content(json{{"error", {{"message", msg}}}}.dump(),
+                        "application/json");
+      });
+
   svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
     res.set_content(R"({"status":"ok"})", "application/json");
   });
@@ -445,6 +639,8 @@ int main(int argc, char** argv) {
 
   svr.Post("/v1/chat/completions", handle_chat);
   svr.Post("/chat/completions", handle_chat);
+  svr.Post("/v1/completions", handle_completions);
+  svr.Post("/completions", handle_completions);
 
   std::fprintf(stderr, "[litert-lm-server] listening on %s:%d\n", host.c_str(),
                port);
