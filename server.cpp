@@ -38,7 +38,10 @@ std::mutex g_infer_mutex;  // serialize all inference through the single engine.
 // window is treated as stalled: the request is cancelled so it cannot hold
 // g_infer_mutex forever and wedge every other request (the engine's own
 // blocking path already bounds the non-streaming case internally).
-constexpr std::chrono::seconds kStreamIdleTimeout{60};
+// The first token gets its own, longer window: on a slow CPU the first request
+// also builds the XNNPACK weight cache, which can take well over a minute.
+std::chrono::seconds g_stream_idle_timeout{60};
+std::chrono::seconds g_first_token_timeout{300};
 
 // Upper bound on a single request's generated tokens. Without it a client can
 // ask for billions and drive KV-cache/output allocation past what a gateway has.
@@ -411,11 +414,12 @@ void handle_chat_parsed(const json& body, httplib::Response& res) {
   }
 
   auto sent_role = std::make_shared<bool>(false);
+  auto got_output = std::make_shared<bool>(false);
   auto done = std::make_shared<bool>(false);
 
   res.set_chunked_content_provider(
       "text/event-stream",
-      [id, created, hold, sent_role, done](
+      [id, created, hold, sent_role, got_output, done](
           size_t /*offset*/, httplib::DataSink& sink) -> bool {
         if (*done) return false;
         StreamState* st = hold->st.get();
@@ -469,7 +473,7 @@ void handle_chat_parsed(const json& body, httplib::Response& res) {
           // Wake on an error too: the engine may report one with neither a chunk
           // nor is_final, and it must be surfaced below rather than mistimed as a
           // stall for the full idle window.
-          if (!st->cv.wait_for(lk, kStreamIdleTimeout,
+          if (!st->cv.wait_for(lk, *got_output ? g_stream_idle_timeout : g_first_token_timeout,
                                [&] {
                                  return !st->chunks.empty() || st->finished ||
                                         !st->error.empty();
@@ -480,6 +484,7 @@ void handle_chat_parsed(const json& body, httplib::Response& res) {
           while (!st->chunks.empty()) {
             std::string raw = std::move(st->chunks.front());
             st->chunks.pop_front();
+            *got_output = true;
             lk.unlock();
             // Each streamed chunk is a full LiteRT message JSON; pull its text.
             std::string piece = extract_text(raw.c_str());
@@ -621,7 +626,11 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "error: --chat-template-kwargs must be a JSON object\n");
         return 2;
       }
-    } else if (a == "--trim-after-request")
+    } else if (a == "--stream-idle-timeout")
+      g_stream_idle_timeout = std::chrono::seconds(std::atoi(next().c_str()));
+    else if (a == "--first-token-timeout")
+      g_first_token_timeout = std::chrono::seconds(std::atoi(next().c_str()));
+    else if (a == "--trim-after-request")
       g_trim_after_request = true;
     else if (a == "-h" || a == "--help") {
       std::printf(
@@ -635,7 +644,9 @@ int main(int argc, char** argv) {
           "    --no-parallel-loading    load model file sections serially\n"
           "  Server:\n"
           "    --chat-template-kwargs J default template variables, e.g. '{\"enable_thinking\":false}'\n"
-          "    --trim-after-request     return freed heap to the OS after each request (glibc)\n");
+          "    --trim-after-request     return freed heap to the OS after each request (glibc)\n"
+          "    --first-token-timeout S  stream: seconds to wait for the first token (default 300)\n"
+          "    --stream-idle-timeout S  stream: seconds allowed between later tokens (default 60)\n");
       return 0;
     }
   }

@@ -73,6 +73,8 @@ Engine settings (unset means LiteRT-LM's own default):
 | `--no-parallel-loading` | Load model file sections serially |
 | `--chat-template-kwargs JSON` | Default chat-template variables, e.g. `'{"enable_thinking":false}'` for Qwen3. A request's own `chat_template_kwargs` object is merged over it. |
 | `--trim-after-request` | Return freed heap to the OS after each request (glibc builds) |
+| `--first-token-timeout S` | Streaming: seconds to wait for the first token before cancelling (default 300; the first request on a slow CPU also builds the XNNPACK cache) |
+| `--stream-idle-timeout S` | Streaming: seconds allowed between later tokens (default 60) |
 
 On memory-constrained hosts, use `--trim-after-request`. glibc otherwise keeps each
 request's freed buffers, which shows up as RSS growth between identical requests.
