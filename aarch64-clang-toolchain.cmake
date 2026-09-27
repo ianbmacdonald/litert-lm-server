@@ -1,7 +1,12 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 
-set(ARMGNU "/home/imac/.cache/bazel/_bazel_imac/18dd4e31d171336460403a9a20c69030/external/aarch64_linux_toolchain")
+if(NOT ARMGNU)
+  set(ARMGNU "$ENV{ARMGNU}")
+endif()
+if(NOT ARMGNU)
+  message(FATAL_ERROR "Set ARMGNU (-DARMGNU=... or env) to an ARM GNU Toolchain 11.3.Rel1 aarch64-none-linux-gnu root")
+endif()
 
 set(CMAKE_C_COMPILER clang)
 set(CMAKE_CXX_COMPILER clang++)

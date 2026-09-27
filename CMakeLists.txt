@@ -12,7 +12,8 @@ endif()
 set(LITERT_LM_ROOT "/home/imac/lemonade-litert-build/bazel-native/LiteRT-LM"
     CACHE PATH "Root of the LiteRT-LM bazel build tree")
 set(LITERT_LM_INCLUDE_DIR "${LITERT_LM_ROOT}/c")
-set(LITERT_LM_LIB_DIR "${LITERT_LM_ROOT}/bazel-bin/c")
+set(LITERT_LM_LIB_DIR "${LITERT_LM_ROOT}/bazel-bin/c"
+    CACHE PATH "Directory holding the prebuilt liblitert-lm.so")
 
 find_package(Threads REQUIRED)
 
