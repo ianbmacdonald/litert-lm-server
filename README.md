@@ -61,6 +61,24 @@ g++ -std=c++17 -O2 server.cpp \
 Engine creation is heavy and happens once at startup (a few seconds). `/health`
 returns 200 only after the engine is ready.
 
+Engine settings (unset means LiteRT-LM's own default):
+
+| Flag | Effect |
+|------|--------|
+| `--max-num-tokens N` | Context/KV cap (prompt + output tokens) |
+| `--num-threads N` | CPU threads |
+| `--activation-type T` | Activation data type: `f32`, `f16`, `i16`, `i8` |
+| `--prefill-chunk-size N` | CPU prefill chunk size |
+| `--cache-dir DIR` | Where the XNNPACK weight cache is written (default: next to the model, which must then be writable) |
+| `--no-parallel-loading` | Load model file sections serially |
+| `--chat-template-kwargs JSON` | Default chat-template variables, e.g. `'{"enable_thinking":false}'` for Qwen3. A request's own `chat_template_kwargs` object is merged over it. |
+| `--trim-after-request` | Return freed heap to the OS after each request (glibc builds) |
+
+On memory-constrained hosts, use `--trim-after-request`. glibc otherwise keeps each
+request's freed buffers, which shows up as RSS growth between identical requests.
+Measured with qwen3 0.6B mixed-int4 on 2 CPUs: +352 MiB between two identical chats
+without it, +8 MiB with it.
+
 ## Endpoints (OpenAI-compatible)
 
 | Method | Path | Notes |

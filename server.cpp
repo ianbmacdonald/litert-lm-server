@@ -14,6 +14,10 @@
 #include <random>
 #include <string>
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 #include "engine.h"
 #include "httplib.h"
 #include "json.hpp"
@@ -24,6 +28,10 @@ namespace {
 
 LiteRtLmEngine* g_engine = nullptr;
 std::string g_model_id = "litert-lm";
+// Server-wide chat-template variables (e.g. {"enable_thinking": false}); a
+// request's own chat_template_kwargs are merged over these.
+json g_chat_template_kwargs = json::object();
+bool g_trim_after_request = false;
 std::mutex g_infer_mutex;  // serialize all inference through the single engine.
 
 // A streaming generation that produces no token and does not finish within this
@@ -127,6 +135,11 @@ struct RequestCtx {
     if (cc) litert_lm_conversation_config_delete(cc);
     if (sc) litert_lm_session_config_delete(sc);
     if (sp) litert_lm_sampler_params_delete(sp);
+#if defined(__GLIBC__)
+    // glibc keeps freed per-conversation buffers in its arenas, which reads as
+    // RSS growth between identical requests; hand them back to the kernel.
+    if (g_trim_after_request) malloc_trim(0);
+#endif
   }
 };
 
@@ -207,6 +220,18 @@ std::unique_ptr<RequestCtx> build_ctx(const json& body, std::string* err) {
   }
   if (!history.empty())
     litert_lm_conversation_config_set_messages(ctx->cc, history.dump().c_str());
+
+  json template_kwargs = g_chat_template_kwargs;
+  if (body.contains("chat_template_kwargs")) {
+    if (!body["chat_template_kwargs"].is_object()) {
+      *err = "'chat_template_kwargs' must be an object";
+      return nullptr;
+    }
+    template_kwargs.update(body["chat_template_kwargs"]);
+  }
+  if (!template_kwargs.empty())
+    litert_lm_conversation_config_set_extra_context(ctx->cc,
+                                                    template_kwargs.dump().c_str());
 
   ctx->conv = litert_lm_conversation_create(g_engine, ctx->cc);
   if (!ctx->conv) {
@@ -553,6 +578,10 @@ int main(int argc, char** argv) {
   // gateway is not a default we want; --host can widen it deliberately.
   std::string model_path, host = "127.0.0.1";
   int port = 8080;
+  int max_num_tokens = 0, num_threads = 0, prefill_chunk_size = 0;
+  int activation_type = -1;
+  std::string cache_dir;
+  bool parallel_loading = true;
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     auto next = [&]() -> std::string {
@@ -566,10 +595,47 @@ int main(int argc, char** argv) {
       host = next();
     else if (a == "--model-id")
       g_model_id = next();
+    else if (a == "--max-num-tokens")
+      max_num_tokens = std::atoi(next().c_str());
+    else if (a == "--num-threads")
+      num_threads = std::atoi(next().c_str());
+    else if (a == "--prefill-chunk-size")
+      prefill_chunk_size = std::atoi(next().c_str());
+    else if (a == "--activation-type") {
+      std::string t = next();
+      if (t == "f32") activation_type = 0;
+      else if (t == "f16") activation_type = 1;
+      else if (t == "i16") activation_type = 2;
+      else if (t == "i8") activation_type = 3;
+      else {
+        std::fprintf(stderr, "error: --activation-type must be f32, f16, i16 or i8\n");
+        return 2;
+      }
+    } else if (a == "--cache-dir")
+      cache_dir = next();
+    else if (a == "--no-parallel-loading")
+      parallel_loading = false;
+    else if (a == "--chat-template-kwargs") {
+      g_chat_template_kwargs = json::parse(next(), nullptr, false);
+      if (!g_chat_template_kwargs.is_object()) {
+        std::fprintf(stderr, "error: --chat-template-kwargs must be a JSON object\n");
+        return 2;
+      }
+    } else if (a == "--trim-after-request")
+      g_trim_after_request = true;
     else if (a == "-h" || a == "--help") {
       std::printf(
-          "Usage: litert-lm-server --model <path> [--port N] [--host H] "
-          "[--model-id ID]\n");
+          "Usage: litert-lm-server --model <path> [--port N] [--host H] [--model-id ID]\n"
+          "  Engine (defaults: LiteRT-LM's own):\n"
+          "    --max-num-tokens N       context/KV cap (prompt + output tokens)\n"
+          "    --num-threads N          CPU threads\n"
+          "    --activation-type T      f32 | f16 | i16 | i8\n"
+          "    --prefill-chunk-size N   CPU prefill chunk size\n"
+          "    --cache-dir DIR          XNNPACK/weight cache dir (default: next to the model)\n"
+          "    --no-parallel-loading    load model file sections serially\n"
+          "  Server:\n"
+          "    --chat-template-kwargs J default template variables, e.g. '{\"enable_thinking\":false}'\n"
+          "    --trim-after-request     return freed heap to the OS after each request (glibc)\n");
       return 0;
     }
   }
@@ -592,6 +658,18 @@ int main(int argc, char** argv) {
     std::fprintf(stderr, "error: failed to create engine settings\n");
     return 1;
   }
+  if (max_num_tokens > 0)
+    litert_lm_engine_settings_set_max_num_tokens(settings, max_num_tokens);
+  if (num_threads > 0)
+    litert_lm_engine_settings_set_num_threads(settings, num_threads);
+  if (prefill_chunk_size > 0)
+    litert_lm_engine_settings_set_prefill_chunk_size(settings, prefill_chunk_size);
+  if (activation_type >= 0)
+    litert_lm_engine_settings_set_activation_data_type(settings, activation_type);
+  if (!cache_dir.empty())
+    litert_lm_engine_settings_set_cache_dir(settings, cache_dir.c_str());
+  if (!parallel_loading)
+    litert_lm_engine_settings_set_parallel_file_section_loading(settings, false);
   g_engine = litert_lm_engine_create(settings);
   litert_lm_engine_settings_delete(settings);
   if (!g_engine) {
