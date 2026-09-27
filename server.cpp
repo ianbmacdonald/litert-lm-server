@@ -13,6 +13,7 @@
 #include <mutex>
 #include <random>
 #include <string>
+#include <thread>
 
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -32,6 +33,35 @@ std::string g_model_id = "litert-lm";
 // request's own chat_template_kwargs are merged over these.
 json g_chat_template_kwargs = json::object();
 bool g_trim_after_request = false;
+// Set once the engine has failed a blocking request (e.g. its internal 10-minute
+// DEADLINE_EXCEEDED). The engine's worker may still be running that session and
+// the C API offers no way to join it, so the engine can no longer be trusted:
+// requests get 503, /health reports unhealthy, and the process exits for its
+// supervisor (lemond, procd) to restart it.
+std::atomic<bool> g_engine_failed{false};
+// LiteRT-LM's blocking send waits at most 10 minutes (kWaitUntilDoneTimeout).
+constexpr std::chrono::minutes kEngineDeadlineGuard{9};
+
+void fail_engine(const std::string& reason) {
+  if (g_engine_failed.exchange(true)) return;
+  std::fprintf(stderr, "[litert-lm-server] engine failed (%s); exiting for restart\n",
+               reason.c_str());
+  std::thread([] {
+    // Let the in-flight 503 reach the client, then leave without touching the
+    // engine again: destructors could run into the still-busy worker.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::_Exit(75);
+  }).detach();
+}
+
+bool reject_if_engine_failed(httplib::Response& res) {
+  if (!g_engine_failed.load()) return false;
+  res.status = 503;
+  res.set_content(
+      R"J({"error":{"message":"engine failed on an earlier request; the server is restarting"}})J",
+      "application/json");
+  return true;
+}
 std::mutex g_infer_mutex;  // serialize all inference through the single engine.
 
 // A streaming generation that produces no token and does not finish within this
@@ -357,8 +387,10 @@ void handle_chat_parsed(const json& body, httplib::Response& res) {
   std::string id = now_id();
   int64_t created = unix_now();
 
+  if (reject_if_engine_failed(res)) return;
   if (!stream) {
     std::lock_guard<std::mutex> lk(g_infer_mutex);
+    if (reject_if_engine_failed(res)) return;
     std::string err;
     auto ctx = build_ctx(body, &err);
     if (!ctx) {
@@ -367,12 +399,30 @@ void handle_chat_parsed(const json& body, httplib::Response& res) {
                       "application/json");
       return;
     }
+    const auto started = std::chrono::steady_clock::now();
     LiteRtLmJsonResponse* resp = litert_lm_conversation_send_message(
         ctx->conv, ctx->final_message_json.c_str(), nullptr, nullptr);
     if (!resp) {
+      // The C API returns null for every failure. A fast one (bad input, a prompt
+      // over --max-num-tokens) comes back after the work has stopped, so the
+      // request context is torn down normally. A null after the engine's
+      // 10-minute wait means its worker may still hold this conversation:
+      // cancel it and deliberately leak the request context, because deleting
+      // it was a use-after-free that corrupted the engine mutex on the next
+      // request.
+      if (std::chrono::steady_clock::now() - started >= kEngineDeadlineGuard) {
+        litert_lm_conversation_cancel_process(ctx->conv);
+        ctx.release();
+        fail_engine("the engine hit its request deadline");
+        res.status = 503;
+        res.set_content(
+            R"J({"error":{"message":"inference exceeded the engine's 10-minute deadline; the server is restarting"}})J",
+            "application/json");
+        return;
+      }
       res.status = 500;
       res.set_content(
-          R"({"error":{"message":"engine returned no response"}})",
+          R"J({"error":{"message":"engine returned no response (see the server log; a prompt longer than --max-num-tokens fails this way)"}})J",
           "application/json");
       return;
     }
@@ -712,6 +762,11 @@ int main(int argc, char** argv) {
       });
 
   svr.Get("/health", [](const httplib::Request&, httplib::Response& res) {
+    if (g_engine_failed.load()) {
+      res.status = 503;
+      res.set_content(R"({"status":"engine_failed"})", "application/json");
+      return;
+    }
     res.set_content(R"({"status":"ok"})", "application/json");
   });
 
