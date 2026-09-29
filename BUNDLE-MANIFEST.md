@@ -91,7 +91,13 @@ replaced by `$ORIGIN/../lib`, and both engine libs get rpath `$ORIGIN`.
 
       #!/bin/sh
       d=$(cd "$(dirname "$0")" && pwd)
+      # procd (prplOS/OpenWrt) preloads its musl stdout helper /lib/libsetlbf.so into services started with
+      # stdout 1, and lemond passes its environment to the backends it spawns. A musl library cannot load
+      # into this glibc process (it segfaults), and nothing a musl host preloads is valid here.
+      unset LD_PRELOAD
       exec "$d/lib/ld-linux-aarch64.so.1" --library-path "$d/lib" "$d/bin/litert-lm-server" "$@"
+
+Since v0.2.2 the wrapper drops `LD_PRELOAD`: prplOS/OpenWrt procd preloads a musl helper into services, which crashes a glibc process (measured on prpl1 by prpl-harness, 2026-09-29).
 
 This makes the bundle self-contained: it carries its own glibc loader + libc, so it
 runs on a **musl** gateway host with no glibc installed. `patchelf` 0.18 + `qemu-user` are installed on imac (2026-07-23); the shipped bundle is
