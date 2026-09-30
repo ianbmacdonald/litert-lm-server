@@ -1,0 +1,23 @@
+diff --git a/cmake/packages/litert/litert_patcher.cmake b/cmake/packages/litert/litert_patcher.cmake
+index 4e693b43..6557a9b4 100644
+--- a/cmake/packages/litert/litert_patcher.cmake
++++ b/cmake/packages/litert/litert_patcher.cmake
+@@ -256,4 +256,18 @@ foreach(_tensor_cmakelist IN LISTS _tensor_example_cmakelists)
+     endif()
+ endforeach()
+ 
++# GCC 13.3 (prplOS musl toolchain) ICEs in constrain_class_visibility on AiLiteCoreManager::PublicApi,
++# whose members are decltype(&fn) of functions declared inside an anonymous namespace. Use a named
++# namespace plus a using-directive: same unqualified lookup, same enum isolation, no ICE.
++foreach(_samsung_src IN ITEMS
++    "${LITERTLM_LITERT_SRC_DIR}/vendors/samsung/ai_litecore_manager.h"
++    "${LITERTLM_LITERT_SRC_DIR}/vendors/samsung/ai_litecore_manager.cc")
++    if(EXISTS "${_samsung_src}")
++        file(READ "${_samsung_src}" CONTENT)
++        string(REGEX REPLACE "namespace {\n// Avoid enum name warning\n#include \"graphgen_c.h\"\n}  // namespace\n"
++            "namespace litert_samsung_graphgen {\n#include \"graphgen_c.h\"\n}  // namespace litert_samsung_graphgen\nusing namespace litert_samsung_graphgen;\n" CONTENT "${CONTENT}")
++        file(WRITE "${_samsung_src}" "${CONTENT}")
++    endif()
++endforeach()
++
+ message(STATUS "[LiteRTLM] Patching Phase Complete.")

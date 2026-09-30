@@ -1,0 +1,22 @@
+diff --git a/cmake/packages/protobuf/protobuf_config.cmake b/cmake/packages/protobuf/protobuf_config.cmake
+index be31399e..0bea8a08 100644
+--- a/cmake/packages/protobuf/protobuf_config.cmake
++++ b/cmake/packages/protobuf/protobuf_config.cmake
+@@ -31,11 +31,13 @@ set(LITERTLM_PROTOC_EXECUTABLE "${LITERTLM_PROTOBUF_BIN_DIR}/protoc" CACHE PATH
+ set(LITERTLM_PROTOC_EXE "${LITERTLM_PROTOBUF_BIN_DIR}/protoc" CACHE PATH "")
+ set(protobuf_generate_PROTOC_EXE "${LITERTLM_PROTOBUF_BIN_DIR}/protoc" CACHE PATH "")
+ 
+-if("${LITERTLM_ORCHESTRATION_PHASE}" STREQUAL "litert_lm")
++if(NOT "${LITERTLM_HOST_PROTOC}" STREQUAL "")
+     message(STATUS "[LiteRTLM] Protobuf: Using host protoc at ${LITERTLM_HOST_PROTOC}")
+-    set(LITERTLM_PROTOBUF_BIN_DIR "${LITERTLM_HOST_PROTOC_BIN_DIR}" CACHE PATH "Host Protobuf binary path")
+-    set(LITERTLM_PROTOC_EXECUTABLE "${LITERTLM_HOST_PROTOC}" CACHE PATH "Host protoc")
+-    set(protobuf_generate_PROTOC_EXE "${LITERTLM_HOST_PROTOC}" CACHE PATH "Host protoc for generator module")
++    set(LITERTLM_PROTOBUF_BIN_DIR "${LITERTLM_HOST_PROTOC_BIN_DIR}" CACHE PATH "Host Protobuf binary path" FORCE)
++    set(LITERTLM_PROTOC_EXECUTABLE "${LITERTLM_HOST_PROTOC}" CACHE PATH "Host protoc" FORCE)
++    set(LITERTLM_PROTOC_EXE "${LITERTLM_HOST_PROTOC}" CACHE PATH "Host protoc" FORCE)
++    set(LITERTLM_PROTOBUF_PROTOC_EXECUTABLE "${LITERTLM_HOST_PROTOC}" CACHE PATH "Host protoc" FORCE)
++    set(protobuf_generate_PROTOC_EXE "${LITERTLM_HOST_PROTOC}" CACHE PATH "Host protoc for generator module" FORCE)
+ endif()
+ set(LITERTLM_PROTOBUF_PACKAGE_DIR
+     "${LITERTLM_CMAKE_PACKAGES_DIR}/protobuf"

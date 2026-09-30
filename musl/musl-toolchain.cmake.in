@@ -1,0 +1,21 @@
+# Rendered by build-musl.sh into <work>/toolchain/musl-toolchain.cmake.
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR x86_64)
+set(CMAKE_C_COMPILER @TOOLCHAIN_DIR@/musl-gcc)
+set(CMAKE_CXX_COMPILER @TOOLCHAIN_DIR@/musl-g++)
+set(CMAKE_AR @TC_BIN@/x86_64-openwrt-linux-musl-gcc-ar CACHE FILEPATH "")
+set(CMAKE_RANLIB @TC_BIN@/x86_64-openwrt-linux-musl-gcc-ranlib CACHE FILEPATH "")
+set(CMAKE_FIND_ROOT_PATH @TARGET_DIR@ @TC_DIR@)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
+set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
+set(CMAKE_C_FLAGS_INIT "-D_GNU_SOURCE")
+set(CMAKE_CXX_FLAGS_INIT "-D_GNU_SOURCE")
+# Corrosion (llguidance) builds its Rust crates for this triple.
+set(Rust_CARGO_TARGET x86_64-unknown-linux-musl CACHE STRING "")
+# LiteRT otherwise tries to build its own host flatc inside a cross build and fails; reuse the one
+# the prebuild phase already built for the host.
+set(TFLITE_HOST_TOOLS_DIR @BUILD_DIR@/prebuild/build/external/flatbuffers/install/bin CACHE PATH "")
+# Read by 07-musl-post-step-hooks.patch.
+set(LITERTLM_MUSL_HOOK_DIR @TOOLCHAIN_DIR@)

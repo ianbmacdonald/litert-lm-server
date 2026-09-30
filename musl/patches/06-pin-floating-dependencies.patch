@@ -1,0 +1,52 @@
+diff --git a/cmake/modules/fetch_content.cmake b/cmake/modules/fetch_content.cmake
+index eef47a7..8639d23 100644
+--- a/cmake/modules/fetch_content.cmake
++++ b/cmake/modules/fetch_content.cmake
+@@ -211,8 +211,8 @@ set(LITERTLM_STB_SRC_DIR ${LITERTLM_THIRD_PARTY_DIR}/stb_lib CACHE PATH "Path to
+ FetchContent_Declare(
+   stb_lib
+   GIT_REPOSITORY https://github.com/nothings/stb.git
+-  GIT_TAG master
+-  GIT_SHALLOW true
++  GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20
++  GIT_SHALLOW false
+   SOURCE_DIR ${LITERTLM_STB_SRC_DIR}
+ )
+ FetchContent_Populate(stb_lib)
+@@ -226,8 +226,8 @@ set(LITERTLM_ZLIB_SRC_DIR ${LITERTLM_THIRD_PARTY_DIR}/zlib CACHE PATH "Path to z
+ FetchContent_Declare(
+   zlib_lib
+   GIT_REPOSITORY https://github.com/madler/zlib
+-  GIT_TAG master
+-  GIT_SHALLOW true
++  GIT_TAG da607da739fa6047df13e66a2af6b8bec7c2a498
++  GIT_SHALLOW false
+   SOURCE_DIR ${LITERTLM_ZLIB_SRC_DIR}
+ )
+ block()
+diff --git a/cmake/packages/re2/re2.cmake b/cmake/packages/re2/re2.cmake
+index 5ec5ac3..24f9daf 100644
+--- a/cmake/packages/re2/re2.cmake
++++ b/cmake/packages/re2/re2.cmake
+@@ -28,7 +28,7 @@ if(NOT EXISTS "${LITERTLM_RE2_CONFIG_CMAKE_FILE}")
+     GIT_REPOSITORY
+       https://github.com/google/re2/
+     GIT_TAG
+-      main
++      972a15cedd008d846f1a39b2e88ce48d7f166cbd
+     PREFIX
+       ${LITERTLM_RE2_EXT_PREFIX}
+     PATCH_COMMAND
+diff --git a/cmake/packages/tokenizers/tokenizers.cmake b/cmake/packages/tokenizers/tokenizers.cmake
+index b83c0c5..76169a2 100644
+--- a/cmake/packages/tokenizers/tokenizers.cmake
++++ b/cmake/packages/tokenizers/tokenizers.cmake
+@@ -45,7 +45,7 @@ if(TRUE)
+     GIT_REPOSITORY
+       https://github.com/mlc-ai/tokenizers-cpp
+     GIT_TAG
+-      main
++      c586c52f93f7b060753bd2388eb96a105cb7374d
+     PREFIX
+       ${LITERTLM_TOKENIZERS_EXT_PREFIX}
+     PATCH_COMMAND

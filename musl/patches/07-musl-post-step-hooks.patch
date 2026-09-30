@@ -1,0 +1,41 @@
+diff --git a/cmake/packages/tflite/tflite.cmake b/cmake/packages/tflite/tflite.cmake
+index f09e50e..6564f74 100644
+--- a/cmake/packages/tflite/tflite.cmake
++++ b/cmake/packages/tflite/tflite.cmake
+@@ -104,6 +104,16 @@ if(NOT EXISTS "${LITERTLM_LITERTLM_TFLITE_STATIC_LIB}")
+             "-DLITERTLM_PROTOBUF_INCLUDE_DIRS=${LITERTLM_PROTOBUF_INCLUDE_DIR}"
+             "-DLITERTLM_PROTOC_EXECUTABLE=${LITERTLM_PROTOC_EXECUTABLE}"
+     )
++    # musl cross build (litert-lm-server/musl): the TFLite dependency archives that
++    # tflite_target_map.cmake hands to LiteRT are not all produced by tflite_external.
++    if(DEFINED LITERTLM_MUSL_HOOK_DIR)
++        ExternalProject_Add_Step(tflite_external musl_stage_archives
++            DEPENDEES install
++            COMMAND "${LITERTLM_MUSL_HOOK_DIR}/03-stage-tflite-archives.sh"
++                    "<BINARY_DIR>" "${LITERTLM_TFLITE_LIB_DIR}"
++                    "${LITERTLM_TFLITE_PACKAGE_DIR}/tflite_target_map.cmake"
++            COMMENT "[musl] Staging the TFLite archives LiteRT links against")
++    endif()
+ else()
+     message(STATUS "[LiteRTLM] TFLite found at: ${LITERTLM_TFLITE_STATIC_LIB}")
+     if(NOT TARGET tflite_external)
+diff --git a/cmake/packages/tokenizers/tokenizers.cmake b/cmake/packages/tokenizers/tokenizers.cmake
+index 76169a2..a602792 100644
+--- a/cmake/packages/tokenizers/tokenizers.cmake
++++ b/cmake/packages/tokenizers/tokenizers.cmake
+@@ -64,6 +64,15 @@ if(TRUE)
+       -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+       # "-DCMAKE_PREFIX_PATH=${LITERTLM_ABSL_INSTALL_PREFIX};${LITERTLM_PROTOBUF_INSTALL_PREFIX};${LITERTLM_SENTENCEPIECE_INSTALL_PREFIX}"
+   )
++  # musl cross build (litert-lm-server/musl): tokenizers-cpp passes no cargo --target for a
++  # generic Linux cross build, so libtokenizers_c.a comes out for the host triple.
++  if(DEFINED LITERTLM_MUSL_HOOK_DIR)
++    ExternalProject_Add_Step(tokenizers-cpp_external musl_rebuild_tokenizers_c
++      DEPENDEES build
++      DEPENDERS install
++      COMMAND "${LITERTLM_MUSL_HOOK_DIR}/05-tokenizers-c-musl.sh" "<SOURCE_DIR>" "<BINARY_DIR>"
++      COMMENT "[musl] Rebuilding libtokenizers_c.a for x86_64-unknown-linux-musl")
++  endif()
+ 
+ else()
+     message(STATUS "tokenizers-cpp already installed at: ${LITERTLM_TOKENIZERS_INSTALL_PREFIX}")
