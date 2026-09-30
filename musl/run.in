@@ -1,6 +1,6 @@
 #!/bin/sh
 # litert-lm-server (x86_64 musl). The binary finds lib/ through its RUNPATH ($ORIGIN/../lib), so this
-# wrapper only resolves its own directory. LD_PRELOAD is deliberately left alone: procd preloads the
-# musl /lib/libsetlbf.so, which is valid in this musl process.
-d=$(cd "$(dirname "$0")" && pwd)
+# wrapper only resolves its own directory, through symlinks, so /usr/bin may link to it. LD_PRELOAD is
+# deliberately left alone: procd preloads the musl /lib/libsetlbf.so, which is valid in this process.
+d=$(dirname "$(readlink -f "$0")")
 exec "$d/bin/litert-lm-server" "$@"

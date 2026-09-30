@@ -16,6 +16,8 @@
 #
 # Re-running is safe: finished downloads, the clone and the configure are reused, make is
 # incremental, and server/licenses/bundle are regenerated. --from/--to/--only restrict the steps.
+# A changed patch set refuses to reuse a work dir (the fetched external trees would not be
+# re-patched or reconfigured); start from an empty one.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -42,7 +44,7 @@ ONLY=""
 STEPS="preflight jre toolchain source configure build server licenses bundle"
 
 usage() {
-    sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+    awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
     cat <<EOF
 
 Options (environment variable in brackets):
@@ -127,10 +129,11 @@ trap on_exit EXIT
 
 step_preflight() {
     local t missing=""
-    for t in bash cmake make git python3 curl tar gzip sha256sum cargo rustup rustc systemd-run nice sed awk find; do
+    for t in bash cmake make git python3 curl tar gzip sha256sum cargo rustup rustc nice sed awk find; do
         command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
     done
     [ -z "$missing" ] || die "missing tools:$missing"
+    [ "$SCOPE" = 0 ] || command -v systemd-run > /dev/null 2>&1 || die "missing tools: systemd-run (or pass --no-scope)"
     [ "$SCOPE" = 0 ] || systemd-run --user --scope --quiet -p MemoryMax=1G -- true \
         || die "systemd-run --user --scope does not work here (no user manager?); pass --no-scope"
     rustup target list --installed > "$LOGS/rust-targets.txt" || die "rustup target list failed"
@@ -212,6 +215,15 @@ step_source() {
         fi
     done
     git -C "$SRC" status --short
+    patchset_hash > "$WORK/stamps/patchset.new"
+    if [ -f "$WORK/stamps/patchset" ] && ! cmp -s "$WORK/stamps/patchset" "$WORK/stamps/patchset.new"; then
+        die "the patch set changed since this work dir was configured; build in an empty work dir"
+    fi
+    mv "$WORK/stamps/patchset.new" "$WORK/stamps/patchset"
+}
+
+patchset_hash() {
+    (cd "$HERE" && sha256sum patches/0* patches/tokenizers-c.Cargo.lock musl-toolchain.cmake.in wrap/*.in)
 }
 
 step_configure() {
@@ -296,6 +308,7 @@ step_bundle() {
     needed=$("$re" -dW "$b/bin/litert-lm-server" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort | tr '\n' ' ' | sed 's/ $//')
     [ "$needed" = "$EXPECTED_NEEDED" ] || die "NEEDED is '$needed', expected '$EXPECTED_NEEDED'"
     local n
+    [ -e "$ROOTFS/lib/ld-musl-x86_64.so.1" ] || die "the musl loader /lib/ld-musl-x86_64.so.1 is not in the prplOS rootfs $ROOTFS"
     for n in libc.so libgcc_s.so.1 libstdc++.so.6 libz.so.1; do
         [ -e "$ROOTFS/lib/$n" ] || [ -e "$ROOTFS/usr/lib/$n" ] || die "NEEDED $n is not in the prplOS rootfs $ROOTFS"
     done
@@ -349,7 +362,7 @@ step_bundle() {
         echo
         echo "## Patches (musl/patches)"
         echo
-        for d in "$HERE"/patches/0*; do echo "- \`${d##*/}\` sha256 $(sha256sum "$d" | cut -d' ' -f1)"; done
+        for d in "$HERE"/patches/0* "$HERE"/patches/tokenizers-c.Cargo.lock; do echo "- \`${d##*/}\` sha256 $(sha256sum "$d" | cut -d' ' -f1)"; done
         echo
         echo "## Binary"
         echo
