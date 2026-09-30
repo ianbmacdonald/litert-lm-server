@@ -20,6 +20,12 @@
 #endif
 
 #include "engine.h"
+// LiteRT-LM >= 0.17 split the conversation API into its own header and streams
+// LiteRtLmStreamChunk objects instead of (text, is_final, error) arguments.
+#if __has_include("conversation.h")
+#include "conversation.h"
+#define LITERT_LM_STREAM_CHUNK_API 1
+#endif
 #include "httplib.h"
 #include "json.hpp"
 
@@ -303,8 +309,8 @@ struct StreamState {
   std::string error;
 };
 
-void stream_callback(void* data, const char* chunk, bool is_final,
-                     const char* error_msg) {
+void stream_callback_impl(void* data, const char* chunk, bool is_final,
+                          const char* error_msg) {
   auto* st = static_cast<StreamState*>(data);
   std::lock_guard<std::mutex> lk(st->m);
   if (chunk && *chunk) st->chunks.emplace_back(chunk);  // copy immediately.
@@ -312,6 +318,19 @@ void stream_callback(void* data, const char* chunk, bool is_final,
   if (is_final) st->finished = true;
   st->cv.notify_all();
 }
+
+#ifdef LITERT_LM_STREAM_CHUNK_API
+void stream_callback(void* data, const LiteRtLmStreamChunk* chunk) {
+  stream_callback_impl(data, litert_lm_stream_chunk_get_text(chunk),
+                       litert_lm_stream_chunk_is_final(chunk),
+                       litert_lm_stream_chunk_get_error(chunk));
+}
+#else
+void stream_callback(void* data, const char* chunk, bool is_final,
+                     const char* error_msg) {
+  stream_callback_impl(data, chunk, is_final, error_msg);
+}
+#endif
 
 // A terminal SSE frame carrying an OpenAI-shaped error, followed by [DONE].
 std::string sse_error_frame(const std::string& id, int64_t created,
@@ -710,7 +729,11 @@ int main(int argc, char** argv) {
         (slash == std::string::npos) ? model_path : model_path.substr(slash + 1);
   }
 
+#ifdef LITERT_LM_STREAM_CHUNK_API
+  litert_lm_set_min_log_level(static_cast<LiteRtLmLogSeverity>(3));  // WARNING+
+#else
   litert_lm_set_min_log_level(3);  // WARNING+
+#endif
   std::fprintf(stderr, "[litert-lm-server] loading model: %s\n",
                model_path.c_str());
   LiteRtLmEngineSettings* settings =
@@ -726,7 +749,12 @@ int main(int argc, char** argv) {
   if (prefill_chunk_size > 0)
     litert_lm_engine_settings_set_prefill_chunk_size(settings, prefill_chunk_size);
   if (activation_type >= 0)
+#ifdef LITERT_LM_STREAM_CHUNK_API
+    litert_lm_engine_settings_set_activation_data_type(
+        settings, static_cast<LiteRtLmActivationDataType>(activation_type));
+#else
     litert_lm_engine_settings_set_activation_data_type(settings, activation_type);
+#endif
   if (!cache_dir.empty())
     litert_lm_engine_settings_set_cache_dir(settings, cache_dir.c_str());
   if (!parallel_loading)

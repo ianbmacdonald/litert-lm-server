@@ -19,6 +19,7 @@ find_package(Threads REQUIRED)
 
 add_executable(litert-lm-server server.cpp)
 target_include_directories(litert-lm-server PRIVATE
+    "${LITERT_LM_ROOT}"
     "${LITERT_LM_INCLUDE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 target_link_libraries(litert-lm-server PRIVATE
