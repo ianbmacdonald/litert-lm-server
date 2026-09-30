@@ -11,6 +11,9 @@ endif()
 # Override with -DLITERT_LM_ROOT=... if the build tree moves.
 set(LITERT_LM_ROOT "/home/imac/lemonade-litert-build/bazel-native/LiteRT-LM"
     CACHE PATH "Root of the LiteRT-LM bazel build tree")
+if(LITERT_LM_ROOT STREQUAL "")
+  message(FATAL_ERROR "LITERT_LM_ROOT is empty; set it to the LiteRT-LM source/build tree")
+endif()
 set(LITERT_LM_INCLUDE_DIR "${LITERT_LM_ROOT}/c")
 set(LITERT_LM_LIB_DIR "${LITERT_LM_ROOT}/bazel-bin/c"
     CACHE PATH "Directory holding the prebuilt liblitert-lm.so")

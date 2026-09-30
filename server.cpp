@@ -748,13 +748,14 @@ int main(int argc, char** argv) {
     litert_lm_engine_settings_set_num_threads(settings, num_threads);
   if (prefill_chunk_size > 0)
     litert_lm_engine_settings_set_prefill_chunk_size(settings, prefill_chunk_size);
-  if (activation_type >= 0)
+  if (activation_type >= 0) {
 #ifdef LITERT_LM_STREAM_CHUNK_API
     litert_lm_engine_settings_set_activation_data_type(
         settings, static_cast<LiteRtLmActivationDataType>(activation_type));
 #else
     litert_lm_engine_settings_set_activation_data_type(settings, activation_type);
 #endif
+  }
   if (!cache_dir.empty())
     litert_lm_engine_settings_set_cache_dir(settings, cache_dir.c_str());
   if (!parallel_loading)

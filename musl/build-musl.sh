@@ -164,7 +164,7 @@ step_jre() {
 
 render() {
     sed -e "s#@STAGING_DIR@#$STAGING#g" -e "s#@TC_BIN@#$TC_BIN#g" -e "s#@TC_DIR@#$TC_DIR#g" \
-        -e "s#@TARGET_DIR@#$TARGET_DIR#g" -e "s#@TOOLCHAIN_DIR@#$TOOLCHAIN#g" -e "s#@BUILD_DIR@#$BUILD#g" "$@"
+        -e "s#@TARGET_DIR@#$TARGET_DIR#g" -e "s#@TOOLCHAIN_DIR@#$TOOLCHAIN#g" -e "s#@BUILD_DIR@#$BUILD#g" -e "s#@WORK_DIR@#$WORK#g" "$@"
 }
 
 step_toolchain() {
@@ -300,6 +300,17 @@ step_bundle() {
         [ -e "$ROOTFS/lib/$n" ] || [ -e "$ROOTFS/usr/lib/$n" ] || die "NEEDED $n is not in the prplOS rootfs $ROOTFS"
     done
     { readelf_evidence "$b/bin/litert-lm-server"; readelf_evidence "$b/lib/$KISSFFT_SONAME"; } > "$DIST/readelf-$NAME.txt"
+
+    # CPU-only (patch 08): nothing compiled from an NPU vendor SDK may reach the binary.
+    "$TC_BIN/x86_64-openwrt-linux-musl-nm" -C "$OUT/litert-lm-server" > "$DIST/nm.txt" || die "nm failed"
+    strings -a "$b/bin/litert-lm-server" > "$DIST/strings.txt" || die "strings failed"
+    cat "$DIST/nm.txt" "$DIST/strings.txt" > "$DIST/symbols-and-strings.txt"
+    rm -f "$DIST/nm.txt" "$DIST/strings.txt"
+    if grep -i -E 'qairt|exynos|litecore' "$DIST/symbols-and-strings.txt" > "$DIST/vendor-sdk-hits.txt" || \
+       grep -E 'Qnn[A-Z]|NeuronAdapter|graph_wrapper_api|graphgen_c' "$DIST/symbols-and-strings.txt" >> "$DIST/vendor-sdk-hits.txt"; then
+        die "vendor SDK symbols/strings in the binary (see $DIST/vendor-sdk-hits.txt)"
+    fi
+    rm -f "$DIST/symbols-and-strings.txt" "$DIST/vendor-sdk-hits.txt"
 
     local bin_sha kiss_sha srv_rev srv_dirty
     bin_sha=$(sha256sum "$b/bin/litert-lm-server" | cut -d' ' -f1)

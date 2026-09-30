@@ -271,28 +271,11 @@ def main():
     c.add("fft2d (Ooura)", "tflite-deps/fft2d", os.path.join(tfb, "fft2d"), "Ooura (permissive)",
           files=[f for f in ("readme2d.txt", "readme.txt", "LICENSE") if os.path.isfile(os.path.join(tfb, "fft2d", f))])
 
-    # Vendor SDK headers LiteRT's vendor dispatch code is compiled against.
-    qnn = os.path.join(lrb, "qnn_headers", "qairt")
-    qnn_ver = sorted(os.listdir(qnn))[0] if os.path.isdir(qnn) and os.listdir(qnn) else ""
-    if qnn_ver:
-        c.add("Qualcomm AI Runtime (QNN) SDK headers", "vendor-qualcomm-qairt", os.path.join(qnn, qnn_ver),
-              "Qualcomm proprietary (see PDF)", version=qnn_ver, files=["LICENSE.pdf"], note="headers")
-        c.flags.append(f"Qualcomm QAIRT {qnn_ver} headers are compiled into LiteRT's Qualcomm vendor code that the "
-                       "binary links (whole-archive). Their license is a Qualcomm PDF, not an OSI license: "
-                       "review before redistribution.")
-    else:
-        c.gaps.append(("Qualcomm AI Runtime (QNN) SDK headers", f"not found under {qnn}"))
-    lc = os.path.join(lrb, "litecore_headers")
-    lc_dirs = sorted(os.listdir(lc)) if os.path.isdir(lc) else []
-    lc_dirs = [d for d in lc_dirs if os.path.isdir(os.path.join(lc, d))]
-    if lc_dirs:
-        c.add("Samsung Exynos AI LiteCore headers", "vendor-samsung-litecore", os.path.join(lc, lc_dirs[0]),
-              "Samsung proprietary (see PDF)", version=lc_dirs[0], files=["Exynos_AI_LiteCore_License.pdf"],
-              note="headers")
-        c.flags.append(f"Samsung {lc_dirs[0]} headers are compiled into LiteRT's Samsung vendor code that the "
-                       "binary links. Their license is a Samsung PDF: review before redistribution.")
-    else:
-        c.gaps.append(("Samsung Exynos AI LiteCore headers", f"not found under {lc}"))
+    # CPU-only build: patch 08 keeps LiteRT from configuring its NPU vendor tree, so no vendor SDK
+    # (Qualcomm QAIRT, Samsung LiteCore, MediaTek NeuroPilot) is fetched or compiled in.
+    for d in ("qnn_headers", "litecore_headers", "neuropilot_headers"):
+        if os.path.exists(os.path.join(lrb, d)):
+            c.gaps.append((f"vendor SDK {d}", f"{os.path.join(lrb, d)} exists: the NPU vendor tree was built"))
 
     # Rust: liblitert_lm_deps.a (LiteRT-LM Cargo.toml, via corrosion) and libtokenizers_c.a.
     sets = []

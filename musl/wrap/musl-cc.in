@@ -2,6 +2,7 @@
 # Rendered by build-musl.sh. The prplOS target sysroot is searched LAST (-idirafter) so the fetched
 # deps (absl/protobuf/flatbuffers/...) always win over older copies in the staging headers.
 # FLATBUFFERS_LOCALE_INDEPENDENT=0: musl has no strtoll_l/strtoull_l.
+# -ffile-prefix-map: __FILE__ strings and debug paths do not depend on the work directory.
 export STAGING_DIR=@STAGING_DIR@
-exec @TC_BIN@/x86_64-openwrt-linux-musl-@TOOL@ -D_GNU_SOURCE -DFLATBUFFERS_LOCALE_INDEPENDENT=0 "$@" \
+exec @TC_BIN@/x86_64-openwrt-linux-musl-@TOOL@ -D_GNU_SOURCE -DFLATBUFFERS_LOCALE_INDEPENDENT=0 -ffile-prefix-map=@WORK_DIR@=. "$@" \
     -idirafter @TARGET_DIR@/usr/include -L@TARGET_DIR@/usr/lib -Wl,-rpath-link,@TARGET_DIR@/usr/lib

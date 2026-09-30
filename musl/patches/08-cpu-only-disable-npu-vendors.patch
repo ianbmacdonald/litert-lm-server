@@ -1,0 +1,78 @@
+diff --git a/cmake/packages/litert/litert.cmake b/cmake/packages/litert/litert.cmake
+index 8b935ad..864eea2 100644
+--- a/cmake/packages/litert/litert.cmake
++++ b/cmake/packages/litert/litert.cmake
+@@ -88,6 +88,8 @@ if(NOT EXISTS "${LITERTLM_LITERT_EXTERNAL_DONE}")
+         "-DLITERTLM_HOST_PROTOC_BIN_DIR=${LITERTLM_HOST_PROTOC_BIN_DIR}"
+         "-DLITERTLM_HOST_PROTOC=${LITERTLM_HOST_PROTOC}"
+         -DLITERTLM_KISSFFT_SRC_DIR=${LITERTLM_KISSFFT_SRC_DIR}
++        -DLITERTLM_LITERT_BUILD_CONFIG_DISABLE_NPU_VAL=ON
++        -DLITERT_BUILD_CONFIG_DISABLE_NPU_VAL=ON
+         -P "${LITERTLM_LITERT_PACKAGE_DIR}/litert_patcher.cmake"
+ 
+       CMAKE_ARGS
+@@ -173,8 +175,9 @@ if(NOT EXISTS "${LITERTLM_LITERT_EXTERNAL_DONE}")
+         -DXNNPACK_SET_VERBOSITY=OFF
+         -DTFLITE_ENABLE_GPU=OFF
+         -DLITERT_ENABLE_GPU=OFF
+-        -DLITERT_ENABLE_NPU=ON
+-        -DLITERT_ENABLE_QUALCOMM=ON
++        -DLITERT_ENABLE_NPU=OFF
++        -DLITERT_ENABLE_QUALCOMM=OFF
++        -DLITERT_ENABLE_SAMSUNG=OFF
+         -DLITERT_DISABLE_KLEIDIAI=ON
+         -DLITERT_BUILD_C_API=ON
+         -DLITERT_BUILD_TOOLS=OFF
+diff --git a/cmake/packages/litert/litert_patcher.cmake b/cmake/packages/litert/litert_patcher.cmake
+index 4e693b4..290c2cb 100644
+--- a/cmake/packages/litert/litert_patcher.cmake
++++ b/cmake/packages/litert/litert_patcher.cmake
+@@ -256,4 +256,13 @@ foreach(_tensor_cmakelist IN LISTS _tensor_example_cmakelists)
+     endif()
+ endforeach()
+ 
++# CPU-only build (litert-lm-server/musl): with LITERT_ENABLE_NPU off, do not configure the vendor
++# dispatch tree at all. vendors/CMakeLists.txt otherwise downloads the Qualcomm QAIRT, Samsung
++# LiteCore and MediaTek NeuroPilot SDK headers and force-enables Qualcomm/Samsung when they exist.
++patch_file_content("${LITERTLM_LITERT_SRC_DIR}/CMakeLists.txt"
++    "\nadd_subdirectory(vendors)\n"
++    "\nif(LITERT_ENABLE_NPU)\n  add_subdirectory(vendors)\nendif()\n"
++    FALSE
++)
++
+ message(STATUS "[LiteRTLM] Patching Phase Complete.")
+diff --git a/cmake/packages/litert/litert_target_map.cmake b/cmake/packages/litert/litert_target_map.cmake
+index cbcbed8..07e6fbb 100644
+--- a/cmake/packages/litert/litert_target_map.cmake
++++ b/cmake/packages/litert/litert_target_map.cmake
+@@ -23,30 +23,7 @@ set(LITERTLM_LITERT_TARGET_MAP
+     "litert::litert_apply_plugin=${LITERTLM_LITERT_BUILD_DIR}/tools/liblitert_apply_plugin.a"
+     "litert::litert_tool_flags_common=${LITERTLM_LITERT_BUILD_DIR}/tools/flags/liblitert_tool_flags_common.a"
+     "litert::litert_tool_flags_apply_plugin=${LITERTLM_LITERT_BUILD_DIR}/tools/flags/liblitert_tool_flags_apply_plugin.a"
+-    "litert::litert_tool_flags_mediatek=${LITERTLM_LITERT_BUILD_DIR}/tools/flags/vendors/liblitert_tool_flags_mediatek.a"
+-    "litert::litert_tool_flags_google_tensor=${LITERTLM_LITERT_BUILD_DIR}/tools/flags/vendors/liblitert_tool_flags_google_tensor.a"
+-    "litert::litert_tool_flags_samsung=${LITERTLM_LITERT_BUILD_DIR}/tools/flags/vendors/liblitert_tool_flags_samsung.a"
+-    "litert::litert_tool_flags_intel_openvino=${LITERTLM_LITERT_BUILD_DIR}/tools/flags/vendors/liblitert_tool_flags_intel_openvino.a"
+-    "litert::litert_tool_flags_qualcomm=${LITERTLM_LITERT_BUILD_DIR}/tools/flags/vendors/liblitert_tool_flags_qualcomm.a"
+-    "litert::litert_options_parser_registry=${LITERTLM_LITERT_BUILD_DIR}/tools/flags/vendors/liblitert_options_parser_registry.a"
+     "litert::litert_tool_flags_types=${LITERTLM_LITERT_BUILD_DIR}/tools/flags/liblitert_tool_flags_types.a"
+-    "litert::samsung_soc_model=${LITERTLM_LITERT_BUILD_DIR}/vendors/samsung/libsamsung_soc_model.a"
+-    "litert::samsung_byte_code=${LITERTLM_LITERT_BUILD_DIR}/vendors/samsung/schema/libsamsung_byte_code.a"
+-    "litert::samsung_ai_litecore_manager=${LITERTLM_LITERT_BUILD_DIR}/vendors/samsung/libsamsung_ai_litecore_manager.a"
+-    "litert::qnn_saver_utils=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/libqnn_saver_utils.a"
+-    "litert::qnn_manager=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/libqnn_manager.a"
+-    "litert::qnn_context_binary_info=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/libqnn_context_binary_info.a"
+-    "litert::qnn_tensor_pool=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/libqnn_tensor_pool.a"
+-    "litert::qnn_backends=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/backends/libqnn_backends.a"
+-    "litert::qnn_dump_graph=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/dump/libqnn_dump_graph.a"
+-    "litert::qnn_transformation=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/transformation/libqnn_transformation.a"
+-    "litert::qnn_wrappers=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/wrappers/libqnn_wrappers.a"
+-    "litert::qnn_common=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/libqnn_common.a"
+-    "litert::qnn_builders=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/builders/libqnn_builders.a"
+-    "litert::qnn_miscs=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/utils/libqnn_miscs.a"
+-    "litert::qnn_model=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/utils/libqnn_model.a"
+-    "litert::qnn_flexbuffer_helpers=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/utils/libqnn_flexbuffer_helpers.a"
+-    "litert::qnn_log=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/utils/libqnn_log.a"
+     "litert::litert_logging=${LITERTLM_LITERT_BUILD_DIR}/c/liblitert_logging.a"
+     "litert::litert_c_api=${LITERTLM_LITERT_BUILD_DIR}/c/liblitert_c_api.a"
+     "litert::litert_compiler_plugin=${LITERTLM_LITERT_BUILD_DIR}/compiler/liblitert_compiler_plugin.a"
