@@ -81,3 +81,19 @@ graphs of both Rust staticlibs, the Rust standard library) into `licenses/` and 
 `licenses/INDEX.md`. A component with no findable license file fails the step (or, with
 `--allow-gaps`, is listed under "Gaps"). No NPU vendor SDK is fetched or linked (patch 08); the collector fails if a vendor SDK header tree shows up in the
 build.
+
+## Packaging for OpenWrt / prplOS
+
+Notes from the first package of this bundle (prpl-harness, prplOS 5.1 x86_64 SDK):
+
+- Install `bin/` and `lib/` as siblings (the binary's RUNPATH is `$ORIGIN/../lib`). The `/usr/bin` entry
+  can exec `bin/litert-lm-server` directly or be a symlink to `run`.
+- Declare `DEPENDS:=+libstdcpp +libgcc +zlib` unconditionally. A per-arch form such as `+x86_64:zlib`
+  did not satisfy the SDK's shared-library check (`missing dependencies for the following libraries:
+  libz.so.1`).
+- The SDK does not build zlib, so it cannot see the `libz.so.1` soname even with the dependency
+  declared. Declare it through `Package/<name>/extra_provides` (`echo 'libz.so.1'`).
+- procd's `LD_PRELOAD=/lib/libsetlbf.so` is a musl library and is valid in this process; unsetting it
+  is harmless but not needed.
+- An XNNPACK cache written next to the model by the glibc v0.2.2 bundle is reused (renamed in place,
+  no second copy).
