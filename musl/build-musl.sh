@@ -19,6 +19,7 @@
 # A changed patch set refuses to reuse a work dir (the fetched external trees would not be
 # re-patched or reconfigured); start from an empty one.
 set -euo pipefail
+exec 3>&2
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(dirname "$HERE")
@@ -117,11 +118,11 @@ CURRENT_LOG=""
 on_exit() {
     rc=$?
     if [ $rc -ne 0 ] && [ -n "$CURRENT_STEP" ]; then
-        echo "build-musl.sh: step '$CURRENT_STEP' FAILED (rc=$rc)" >&2
+        echo "build-musl.sh: step '$CURRENT_STEP' FAILED (rc=$rc)" >&3
         if [ -n "$CURRENT_LOG" ] && [ -f "$CURRENT_LOG" ]; then
-            echo "---- last 40 lines of $CURRENT_LOG ----" >&2
-            tail -n 40 "$CURRENT_LOG" >&2
-            echo "---- full log: $CURRENT_LOG ----" >&2
+            echo "---- last 40 lines of $CURRENT_LOG ----" >&3
+            tail -n 40 "$CURRENT_LOG" >&3
+            echo "---- full log: $CURRENT_LOG ----" >&3
         fi
     fi
 }
