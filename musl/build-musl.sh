@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build litert-lm-server for prplOS 5.1 x86_64 (musl) from scratch and package the release bundle.
+# Build litert-lm-server for prplOS 5.1 x86_64 or aarch64 (musl) from scratch and package the release bundle.
 #
-#   musl/build-musl.sh --staging <prplOS staging dir> --work <empty or previous work dir>
+#   musl/build-musl.sh [--arch aarch64] --staging <prplOS staging dir> --work <empty or previous work dir>
 #
 # Steps (run in order; each one fails loudly and names its log):
 #   preflight  tools, rust musl target, staging tree layout
@@ -30,9 +30,9 @@ LITERTLM_SHA=5e58e9a0aef7abf7091207a8b1d1063a1c800f08
 JRE_URL=https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
 JRE_SHA256=0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
 EXPECTED_NEEDED="libc.so libgcc_s.so.1 libkissfft-float.so.131 libstdc++.so.6 libz.so.1"
-EXPECTED_INTERP=/lib/ld-musl-x86_64.so.1
 KISSFFT_SONAME=libkissfft-float.so.131
 
+ARCH=${MUSL_ARCH:-x86_64}
 STAGING=${PRPLOS_STAGING_DIR:-}
 WORK=${MUSL_WORK_DIR:-}
 JOBS=${MUSL_JOBS:-8}
@@ -49,8 +49,10 @@ usage() {
     cat <<EOF
 
 Options (environment variable in brackets):
+  --arch A          x86_64 (default) or aarch64 (cortex-a53) [MUSL_ARCH]
   --staging DIR     prplOS SDK staging dir holding toolchain-x86_64_gcc-13.3.0_musl and
-                    target-x86_64_musl [PRPLOS_STAGING_DIR]
+                    target-x86_64_musl, or toolchain-aarch64_cortex-a53_gcc-13.3.0_musl and
+                    target-aarch64_cortex-a53_musl [PRPLOS_STAGING_DIR]
   --work DIR        work directory; everything is created under it [MUSL_WORK_DIR]
   --jobs N          make parallelism, default 8 [MUSL_JOBS]
   --memory-max SZ   MemoryMax for the systemd user scope around heavy steps, default 16G [MUSL_MEMORY_MAX]
@@ -62,6 +64,7 @@ EOF
 
 while [ $# -gt 0 ]; do
     case "$1" in
+        --arch) ARCH=$2; shift 2 ;;
         --staging) STAGING=$2; shift 2 ;;
         --work) WORK=$2; shift 2 ;;
         --jobs) JOBS=$2; shift 2 ;;
@@ -86,10 +89,19 @@ for s in $FROM $TO $ONLY; do case " $STEPS " in *" $s "*) ;; *) die "unknown ste
 STAGING=$(cd "$STAGING" 2>/dev/null && pwd) || die "staging dir does not exist"
 mkdir -p "$WORK"
 WORK=$(cd "$WORK" && pwd)
-TC_DIR=$STAGING/toolchain-x86_64_gcc-13.3.0_musl
+case "$ARCH" in
+    x86_64) SDK_TARGET=x86_64 ROOTFS_NAME=root-x86 CPU_FLAGS="" ARCH_PATCHES=() ;;
+    aarch64) SDK_TARGET=aarch64_cortex-a53 ROOTFS_NAME=root-qualcommax CPU_FLAGS=" -march=armv8-a+crc -mtune=cortex-a53"
+        ARCH_PATCHES=("$HERE"/patches/aarch64/*.patch) ;;
+    *) die "--arch must be x86_64 or aarch64" ;;
+esac
+CROSS=$ARCH-openwrt-linux-musl
+RUST_TARGET=$ARCH-unknown-linux-musl
+EXPECTED_INTERP=/lib/ld-musl-$ARCH.so.1
+TC_DIR=$STAGING/toolchain-${SDK_TARGET}_gcc-13.3.0_musl
 TC_BIN=$TC_DIR/bin
-TARGET_DIR=$STAGING/target-x86_64_musl
-ROOTFS=$TARGET_DIR/root-x86
+TARGET_DIR=$STAGING/target-${SDK_TARGET}_musl
+ROOTFS=$TARGET_DIR/$ROOTFS_NAME
 TOOLCHAIN=$WORK/toolchain
 SRC=$WORK/src
 BUILD=$WORK/build
@@ -97,7 +109,7 @@ INNER=$BUILD/litert_lm/build
 OUT=$WORK/out
 LOGS=$WORK/logs
 DIST=$WORK/dist
-NAME=litert-lm-server-x86_64-musl-$VERSION
+NAME=litert-lm-server-$ARCH-musl-$VERSION
 export STAGING_DIR=$STAGING
 export PATH=$WORK/jre/bin:$HOME/.cargo/bin:$PATH
 export CARGO_BUILD_JOBS=4
@@ -138,16 +150,16 @@ step_preflight() {
     [ "$SCOPE" = 0 ] || systemd-run --user --scope --quiet -p MemoryMax=1G -- true \
         || die "systemd-run --user --scope does not work here (no user manager?); pass --no-scope"
     rustup target list --installed > "$LOGS/rust-targets.txt" || die "rustup target list failed"
-    grep -x x86_64-unknown-linux-musl "$LOGS/rust-targets.txt" > /dev/null \
-        || die "rust target x86_64-unknown-linux-musl missing: rustup target add x86_64-unknown-linux-musl"
-    [ -x "$TC_BIN/x86_64-openwrt-linux-musl-gcc" ] || die "no musl gcc at $TC_BIN/x86_64-openwrt-linux-musl-gcc"
-    [ -x "$TC_BIN/x86_64-openwrt-linux-musl-g++" ] || die "no musl g++ in $TC_BIN"
+    grep -x "$RUST_TARGET" "$LOGS/rust-targets.txt" > /dev/null \
+        || die "rust target $RUST_TARGET missing: rustup target add $RUST_TARGET"
+    [ -x "$TC_BIN/$CROSS-gcc" ] || die "no musl gcc at $TC_BIN/$CROSS-gcc"
+    [ -x "$TC_BIN/$CROSS-g++" ] || die "no musl g++ in $TC_BIN"
     [ -d "$TARGET_DIR/usr/include" ] || die "no target sysroot headers at $TARGET_DIR/usr/include"
     [ -e "$TARGET_DIR/usr/lib/libz.so" ] || die "no target zlib at $TARGET_DIR/usr/lib/libz.so"
-    "$TC_BIN/x86_64-openwrt-linux-musl-gcc" --version | head -1
+    "$TC_BIN/$CROSS-gcc" --version | head -1
     cmake --version | head -1
     rustc --version
-    echo "staging=$STAGING work=$WORK jobs=$JOBS memory_max=$MEMORY_MAX scope=$SCOPE version=$VERSION"
+    echo "arch=$ARCH staging=$STAGING work=$WORK jobs=$JOBS memory_max=$MEMORY_MAX scope=$SCOPE version=$VERSION"
 }
 
 step_jre() {
@@ -168,7 +180,8 @@ step_jre() {
 
 render() {
     sed -e "s#@STAGING_DIR@#$STAGING#g" -e "s#@TC_BIN@#$TC_BIN#g" -e "s#@TC_DIR@#$TC_DIR#g" \
-        -e "s#@TARGET_DIR@#$TARGET_DIR#g" -e "s#@TOOLCHAIN_DIR@#$TOOLCHAIN#g" -e "s#@BUILD_DIR@#$BUILD#g" -e "s#@WORK_DIR@#$WORK#g" "$@"
+        -e "s#@TARGET_DIR@#$TARGET_DIR#g" -e "s#@TOOLCHAIN_DIR@#$TOOLCHAIN#g" -e "s#@BUILD_DIR@#$BUILD#g" -e "s#@WORK_DIR@#$WORK#g" \
+        -e "s#@ARCH@#$ARCH#g" -e "s#@CPU_FLAGS@#$CPU_FLAGS#g" "$@"
 }
 
 step_toolchain() {
@@ -182,8 +195,8 @@ export STAGING_DIR=$STAGING
 export PATH=$WORK/jre/bin:$HOME/.cargo/bin:\$PATH
 MUSL_CC=$TOOLCHAIN/musl-gcc
 MUSL_CXX=$TOOLCHAIN/musl-g++
-MUSL_AR=$TC_BIN/x86_64-openwrt-linux-musl-ar
-MUSL_NM=$TC_BIN/x86_64-openwrt-linux-musl-nm
+MUSL_AR=$TC_BIN/$CROSS-ar
+MUSL_NM=$TC_BIN/$CROSS-nm
 MUSL_JOBS=4
 EOF
     cp "$HERE/patches/03-stage-tflite-archives.sh" "$HERE/patches/05-tokenizers-c-musl.sh" \
@@ -191,7 +204,7 @@ EOF
     chmod +x "$TOOLCHAIN/musl-gcc" "$TOOLCHAIN/musl-g++" "$TOOLCHAIN"/0*.sh
     echo 'int main(void){return 0;}' > "$TOOLCHAIN/probe.c"
     "$TOOLCHAIN/musl-gcc" -o "$TOOLCHAIN/probe" "$TOOLCHAIN/probe.c" -lz || die "musl-gcc wrapper cannot link a probe against -lz"
-    "$TC_BIN/x86_64-openwrt-linux-musl-readelf" -lW "$TOOLCHAIN/probe" > "$TOOLCHAIN/probe.readelf" || die "readelf failed on the probe"
+    "$TC_BIN/$CROSS-readelf" -lW "$TOOLCHAIN/probe" > "$TOOLCHAIN/probe.readelf" || die "readelf failed on the probe"
     grep -F "$EXPECTED_INTERP" "$TOOLCHAIN/probe.readelf" > /dev/null \
         || die "probe binary does not use $EXPECTED_INTERP"
     ls -la "$TOOLCHAIN"
@@ -206,7 +219,7 @@ step_source() {
     head=$(git -C "$SRC" rev-parse HEAD)
     [ "$head" = "$LITERTLM_SHA" ] || die "LiteRT-LM $LITERTLM_TAG resolved to $head, expected $LITERTLM_SHA"
     local p
-    for p in "$HERE"/patches/0*.patch; do
+    for p in "$HERE"/patches/0*.patch "${ARCH_PATCHES[@]}"; do
         if git -C "$SRC" apply --reverse --check "$p" 2>/dev/null; then
             echo "already applied: ${p##*/}"
         else
@@ -224,7 +237,7 @@ step_source() {
 }
 
 patchset_hash() {
-    (cd "$HERE" && sha256sum patches/0* patches/tokenizers-c.Cargo.lock musl-toolchain.cmake.in wrap/*.in)
+    (cd "$HERE" && sha256sum patches/0* "${ARCH_PATCHES[@]#"$HERE"/}" patches/tokenizers-c.Cargo.lock musl-toolchain.cmake.in wrap/*.in)
 }
 
 step_configure() {
@@ -269,32 +282,34 @@ PY
     local kiss
     kiss=$(find "$INNER/_deps/kissfft_lib-build" -maxdepth 1 -name 'libkissfft-float.so.131*' -type f -print -quit)
     [ -n "$kiss" ] || die "no libkissfft-float.so.131* in $INNER/_deps/kissfft_lib-build"
-    "$TC_BIN/x86_64-openwrt-linux-musl-strip" -o "$OUT/$KISSFFT_SONAME" "$kiss"
-    "$TC_BIN/x86_64-openwrt-linux-musl-strip" -o "$OUT/litert-lm-server.stripped" "$OUT/litert-lm-server"
+    "$TC_BIN/$CROSS-strip" -o "$OUT/$KISSFFT_SONAME" "$kiss"
+    "$TC_BIN/$CROSS-strip" -o "$OUT/litert-lm-server.stripped" "$OUT/litert-lm-server"
     ls -la "$OUT"
 }
 
 step_licenses() {
     python3 "$HERE/collect-licenses.py" --repo "$REPO" --src "$SRC" --build "$BUILD" \
-        --lockfile "$HERE/patches/tokenizers-c.Cargo.lock" --out "$WORK/licenses" || die "license collection failed"
+        --lockfile "$HERE/patches/tokenizers-c.Cargo.lock" --out "$WORK/licenses" \
+        --rust-target "$RUST_TARGET" --arch "$ARCH" || die "license collection failed"
 }
 
 readelf_evidence() {
-    local re=$TC_BIN/x86_64-openwrt-linux-musl-readelf f=$1
+    local re=$TC_BIN/$CROSS-readelf f=$1
     echo "## $f"
     "$re" -lW "$f" | grep -E "Requesting program interpreter" || true
     "$re" -dW "$f" | grep -E "\((NEEDED|RUNPATH|RPATH|SONAME)\)" || true
 }
 
 step_bundle() {
-    local b=$DIST/$NAME re=$TC_BIN/x86_64-openwrt-linux-musl-readelf
+    local b=$DIST/$NAME re=$TC_BIN/$CROSS-readelf
     [ -f "$OUT/litert-lm-server.stripped" ] || die "run the server step first"
     [ -f "$WORK/licenses/INDEX.md" ] || die "run the licenses step first"
     rm -rf "$b" "$DIST/$NAME.tar.gz" "$DIST/$NAME.tar.gz.sha256"
     mkdir -p "$b/bin" "$b/lib"
     install -m 0755 "$OUT/litert-lm-server.stripped" "$b/bin/litert-lm-server"
     install -m 0755 "$OUT/$KISSFFT_SONAME" "$b/lib/$KISSFFT_SONAME"
-    install -m 0755 "$HERE/run.in" "$b/run"
+    render "$HERE/run.in" > "$b/run"
+    chmod 0755 "$b/run"
     cp -a "$WORK/licenses" "$b/licenses"
 
     # Verify before packaging.
@@ -309,16 +324,17 @@ step_bundle() {
     needed=$("$re" -dW "$b/bin/litert-lm-server" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | sort | tr '\n' ' ' | sed 's/ $//')
     [ "$needed" = "$EXPECTED_NEEDED" ] || die "NEEDED is '$needed', expected '$EXPECTED_NEEDED'"
     local n
-    [ -e "$ROOTFS/lib/ld-musl-x86_64.so.1" ] || die "the musl loader /lib/ld-musl-x86_64.so.1 is not in the prplOS rootfs $ROOTFS"
+    [ -e "$ROOTFS$EXPECTED_INTERP" ] || die "the musl loader $EXPECTED_INTERP is not in the prplOS rootfs $ROOTFS"
     for n in libc.so libgcc_s.so.1 libstdc++.so.6 libz.so.1; do
         [ -e "$ROOTFS/lib/$n" ] || [ -e "$ROOTFS/usr/lib/$n" ] || die "NEEDED $n is not in the prplOS rootfs $ROOTFS"
     done
     { readelf_evidence "$b/bin/litert-lm-server"; readelf_evidence "$b/lib/$KISSFFT_SONAME"; } > "$DIST/readelf-$NAME.txt"
 
     # CPU-only (patch 08): nothing compiled from an NPU vendor SDK may reach the binary.
-    "$TC_BIN/x86_64-openwrt-linux-musl-nm" -C "$OUT/litert-lm-server" > "$DIST/nm.txt" || die "nm failed"
+    "$TC_BIN/$CROSS-nm" -C "$OUT/litert-lm-server" > "$DIST/nm.txt" || die "nm failed"
     strings -a "$b/bin/litert-lm-server" > "$DIST/strings.txt" || die "strings failed"
-    cat "$DIST/nm.txt" "$DIST/strings.txt" > "$DIST/symbols-and-strings.txt"
+    # cpuinfo's ARM chipset-name table holds the bare string "Exynos "; it is not vendor SDK code.
+    cat "$DIST/nm.txt" "$DIST/strings.txt" | grep -v -x -F 'Exynos ' > "$DIST/symbols-and-strings.txt"
     rm -f "$DIST/nm.txt" "$DIST/strings.txt"
     if grep -i -E 'qairt|exynos|litecore' "$DIST/symbols-and-strings.txt" > "$DIST/vendor-sdk-hits.txt" || \
        grep -E 'Qnn[A-Z]|NeuronAdapter|graph_wrapper_api|graphgen_c' "$DIST/symbols-and-strings.txt" >> "$DIST/vendor-sdk-hits.txt"; then
@@ -334,7 +350,7 @@ step_bundle() {
     {
         echo "# $NAME — build manifest"
         echo
-        echo "prplOS 5.1 x86_64 (musl) build of litert-lm-server, produced by \`musl/build-musl.sh\`."
+        echo "prplOS 5.1 $ARCH (musl) build of litert-lm-server, produced by \`musl/build-musl.sh\`."
         echo "Install: bin/ and lib/ are siblings (the binary's RUNPATH is \`\$ORIGIN/../lib\`); \`run\` execs"
         echo "bin/litert-lm-server and leaves LD_PRELOAD untouched (procd's /lib/libsetlbf.so is musl and valid here)."
         echo
@@ -355,15 +371,16 @@ step_bundle() {
         echo
         echo "## Toolchain"
         echo
-        echo "- $("$TC_BIN/x86_64-openwrt-linux-musl-gcc" --version | head -1)"
+        echo "- $("$TC_BIN/$CROSS-gcc" --version | head -1)"
         echo "- musl $(sed -n 's/^LIBC_VERSION=//p' "$TC_DIR/info.mk" 2>/dev/null) (prplOS 5.1 staging: $STAGING)"
+        [ -z "$CPU_FLAGS" ] || echo "- target CPU flags (compiler wrappers):$CPU_FLAGS"
         echo "- $(cmake --version | head -1); $(rustc --version); $(cargo --version)"
         echo "- JRE for ANTLR: Temurin 17.0.20.1+1 (sha256 $JRE_SHA256)"
         echo "- build host: $(uname -srm)"
         echo
         echo "## Patches (musl/patches)"
         echo
-        for d in "$HERE"/patches/0* "$HERE"/patches/tokenizers-c.Cargo.lock; do echo "- \`${d##*/}\` sha256 $(sha256sum "$d" | cut -d' ' -f1)"; done
+        for d in "$HERE"/patches/0* "${ARCH_PATCHES[@]}" "$HERE"/patches/tokenizers-c.Cargo.lock; do echo "- \`${d##*/}\` sha256 $(sha256sum "$d" | cut -d' ' -f1)"; done
         echo
         echo "## Binary"
         echo

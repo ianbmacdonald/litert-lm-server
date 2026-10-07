@@ -1,0 +1,21 @@
+diff --git a/cmake/packages/tokenizers/tokenizers.cmake b/cmake/packages/tokenizers/tokenizers.cmake
+--- a/cmake/packages/tokenizers/tokenizers.cmake
++++ b/cmake/packages/tokenizers/tokenizers.cmake
+@@ -73,6 +73,17 @@ if(TRUE)
+       COMMAND "${LITERTLM_MUSL_HOOK_DIR}/05-tokenizers-c-musl.sh" "<SOURCE_DIR>" "<BINARY_DIR>"
+       COMMENT "[musl] Rebuilding libtokenizers_c.a for x86_64-unknown-linux-musl")
+   endif()
++  # musl cross build for aarch64 (litert-lm-server/musl): tokenizers-cpp hard-codes cargo --target
++  # aarch64-unknown-linux-gnu with a nonexistent aarch64-unknown-linux-gnu-gcc. Drop that line so it
++  # builds for the host triple, as on x86_64; the 05 step then rebuilds it for aarch64 musl.
++  if(DEFINED LITERTLM_MUSL_HOOK_DIR)
++    ExternalProject_Add_Step(tokenizers-cpp_external musl_no_gnu_cargo_target
++      DEPENDEES patch
++      DEPENDERS configure
++      WORKING_DIRECTORY <SOURCE_DIR>
++      COMMAND sed -i /CARGO_TARGET.aarch64-unknown-linux-gnu/d CMakeLists.txt
++      COMMENT "[musl] Dropping tokenizers-cpp's aarch64-unknown-linux-gnu cargo target")
++  endif()
+ 
+ else()
+     message(STATUS "tokenizers-cpp already installed at: ${LITERTLM_TOKENIZERS_INSTALL_PREFIX}")

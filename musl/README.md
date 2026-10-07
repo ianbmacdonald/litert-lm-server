@@ -40,7 +40,12 @@ musl/build-musl.sh --staging /path/to/prplos-5.1-staging --work /path/to/empty-d
 # -> <work>/dist/litert-lm-server-x86_64-musl-v0.3.0.tar.gz and .tar.gz.sha256
 ```
 
-Options: `--jobs N` (default 8), `--memory-max 16G`, `--no-scope`, `--version v0.3.0`,
+`--arch aarch64` builds the prplOS 5.1 aarch64 (Cortex-A53) bundle instead, from a staging dir holding
+`toolchain-aarch64_cortex-a53_gcc-13.3.0_musl/` and `target-aarch64_cortex-a53_musl/` (rust target
+`aarch64-unknown-linux-musl`), compiled with `-march=armv8-a+crc -mtune=cortex-a53`, into
+`litert-lm-server-aarch64-musl-<ver>.tar.gz`; the default is `--arch x86_64`.
+
+Options: `--arch x86_64|aarch64`, `--jobs N` (default 8), `--memory-max 16G`, `--no-scope`, `--version v0.3.0`,
 `--from STEP`, `--to STEP`, `--only STEP`. Steps: `preflight jre toolchain source configure build
 server licenses bundle`. Each step logs to `<work>/logs/<step>.log`; a failing step prints the tail of
 its log and stops. Re-running reuses the clone, the configure and the make state.
@@ -70,6 +75,8 @@ upstream defect it covers; none changes LiteRT-LM behavior.
 | `06-pin-floating-dependencies.patch` | v0.17.1 also fetches tokenizers-cpp `main`, re2 `main`, stb `master` and zlib `master`. Pinned to the commits of the validated build (`c586c52f`, `972a15ce`, `2c980bb5`, `da607da7`). |
 | `07-musl-post-step-hooks.patch` | Glue, not a defect: runs 03 and 05 as `ExternalProject_Add_Step`s (after tflite install, between tokenizers build and install) when the toolchain file sets `LITERTLM_MUSL_HOOK_DIR`, so one `make` builds everything with no manual mid-build edits. |
 | `08-cpu-only-disable-npu-vendors.patch` | LiteRT-LM hard-codes `-DLITERT_ENABLE_NPU=ON -DLITERT_ENABLE_QUALCOMM=ON`, LiteRT defaults Samsung on, and LiteRT's `vendors/CMakeLists.txt` downloads the Qualcomm QAIRT and Samsung LiteCore SDK headers and force-enables those backends whenever the headers exist. This is a CPU-only x86_64 build, so the patch turns NPU and every vendor off, sets `LITERT_BUILD_CONFIG_DISABLE_NPU`, skips LiteRT's `vendors/` subdirectory entirely (no SDK download, no dispatch libraries), and removes the vendor archives (qnn_*, samsung_*, vendor tool-flag libraries) from `litert_target_map.cmake` so the link does not ask for them. This also retires the old Samsung GCC 13 ICE workaround (patch 04), since that code is no longer compiled. |
+| `aarch64/09-tokenizers-no-gnu-cargo-target.patch` (aarch64 only) | tokenizers-cpp's CMake hard-codes `cargo --target aarch64-unknown-linux-gnu` (with a nonexistent `aarch64-unknown-linux-gnu-gcc`) whenever `CMAKE_SYSTEM_PROCESSOR` is `aarch64`. The patch adds a post-patch step that deletes that line, so tokenizers-cpp builds for the host triple as it does on x86_64, and hook 05 then rebuilds `libtokenizers_c.a` for `aarch64-unknown-linux-musl`. |
+| `aarch64/10-tflite-map-link-kleidiai.patch` (aarch64 only) | `tflite_target_map.cmake` appends `libkleidiai.a` for cross builds to `TFLITE_TARGET_MAP`, a variable nothing reads, instead of `LITERTLM_TFLITE_TARGET_MAP`. On aarch64 XNNPACK's microkernels call KleidiAI (`kai_*`), so `libLiteRt.so` and the server failed to link (`undefined reference to kai_run_lhs_quant_pack_qai8dxp_f32`). The x86_64 build is left as is: there `libkleidiai.a` is the empty archive hook 03 creates. |
 | `server` step (link line reuse) | LiteRT-LM's CMake has no installable library or shared C-ABI target. The server is linked with `litert_lm_main`'s own whole-archive link line, `server.o` swapped in for `litert_lm_main.cc.o`, build-tree rpaths dropped and `RUNPATH $ORIGIN/../lib` added. |
 | `jre` step | The ANTLR tool jar that generates LiteRT-LM's tool-call parsers needs `java`, which the build neither documents nor checks (`Error 127`). |
 

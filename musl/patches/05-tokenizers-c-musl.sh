@@ -3,19 +3,19 @@
 # build. tokenizers-cpp picks no cargo --target for a generic Linux cross build, so
 # libtokenizers_c.a (and the oniguruma the onig crate builds through the cc crate) comes out for
 # the HOST glibc triple and later fails to link (undefined __memcpy_chk). Rebuild the same crate
-# for x86_64-unknown-linux-musl with the prplOS musl gcc and replace the archive LiteRT-LM links.
+# for the musl target (<arch>-unknown-linux-musl) with the prplOS musl gcc and replace the archive
+# LiteRT-LM links.
 # Args: <tokenizers-cpp source dir> <tokenizers-cpp build dir>
 set -euo pipefail
 . "$(dirname "$0")/musl-env.sh"
 SRC=$1 BLD=$2
-T=x86_64-unknown-linux-musl
+T=$("$MUSL_CC" -dumpmachine | sed 's/-openwrt-/-unknown-/')
+TV=$(echo "$T" | tr - _)
 die() { echo "05-tokenizers-c-musl: $*" >&2; exit 1; }
 [ -f "$SRC/rust/Cargo.toml" ] || die "no $SRC/rust/Cargo.toml"
 [ -f "$BLD/libtokenizers_c.a" ] || die "tokenizers-cpp did not produce $BLD/libtokenizers_c.a"
-export CC_x86_64_unknown_linux_musl=$MUSL_CC
-export CXX_x86_64_unknown_linux_musl=$MUSL_CXX
-export AR_x86_64_unknown_linux_musl=$MUSL_AR
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=$MUSL_CC
+export "CC_$TV=$MUSL_CC" "CXX_$TV=$MUSL_CXX" "AR_$TV=$MUSL_AR"
+export "CARGO_TARGET_$(echo "$TV" | tr a-z A-Z)_LINKER=$MUSL_CC"
 export CARGO_BUILD_JOBS=${MUSL_JOBS:-4}
 unset MAKEFLAGS MFLAGS MAKELEVEL CARGO_MAKEFLAGS
 # tokenizers-cpp does not commit a Cargo.lock; pin the crate graph that was validated.
