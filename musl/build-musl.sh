@@ -115,6 +115,11 @@ export PATH=$WORK/jre/bin:$HOME/.cargo/bin:$PATH
 export CARGO_BUILD_JOBS=4
 unset CMAKE_BUILD_PARALLEL_LEVEL
 mkdir -p "$LOGS" "$WORK/stamps" "$WORK/downloads"
+if [ -f "$WORK/stamps/arch" ]; then
+    [ "$(cat "$WORK/stamps/arch")" = "$ARCH" ] || die "work dir $WORK was built for $(cat "$WORK/stamps/arch"), not $ARCH: use an empty --work"
+else
+    echo "$ARCH" > "$WORK/stamps/arch"
+fi
 
 # Run a heavy command at nice 19, inside a memory-capped systemd user scope unless --no-scope.
 heavy() {

@@ -269,6 +269,8 @@ def main():
         ("ml_dtypes", "ml_dtypes", "Apache-2.0", "headers", None),
     ]:
         if d == "neon2sse" and a.arch != "x86_64":
+            if os.path.exists(os.path.join(tfb, d)):
+                c.gaps.append((name, f"{os.path.join(tfb, d)} exists on {a.arch}: it is linked, add its licence"))
             continue  # NEON_2_SSE is only fetched for x86 targets
         c.add(name, f"tflite-deps/{d.replace('-source', '')}", os.path.join(tfb, d), lic, note=note, extra=extra)
     c.add("fft2d (Ooura)", "tflite-deps/fft2d", os.path.join(tfb, "fft2d"), "Ooura (permissive)",
