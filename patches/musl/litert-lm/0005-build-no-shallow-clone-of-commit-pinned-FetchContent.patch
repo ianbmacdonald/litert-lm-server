@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Ian MacDonald <ian@netstatz.com>
 Date: Sat, 31 Oct 2026 01:08:05 -0400
-Subject: [PATCH 5/5] build: no shallow clone of commit-pinned FetchContent
+Subject: [PATCH 5/6] build: no shallow clone of commit-pinned FetchContent
  sources
 
 ANTLR (7d577039), MiniZip (aee7fbdd) and Minja (021c2293) are pinned to

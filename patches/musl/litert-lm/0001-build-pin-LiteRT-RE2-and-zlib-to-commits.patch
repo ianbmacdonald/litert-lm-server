@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Ian MacDonald <ian@netstatz.com>
 Date: Sat, 31 Oct 2026 00:51:46 -0400
-Subject: [PATCH 1/5] build: pin LiteRT, RE2 and zlib to commits
+Subject: [PATCH 1/6] build: pin LiteRT, RE2 and zlib to commits
 
 v0.19.0 fetches LiteRT main, RE2 main and zlib master, so the release does
 not build reproducibly. Pin each to its branch head as of the release commit

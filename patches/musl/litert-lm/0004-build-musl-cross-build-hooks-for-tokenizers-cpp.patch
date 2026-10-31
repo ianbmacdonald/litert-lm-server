@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Ian MacDonald <ian@netstatz.com>
 Date: Sat, 31 Oct 2026 00:52:39 -0400
-Subject: [PATCH 4/5] build: musl cross-build hooks for tokenizers-cpp
+Subject: [PATCH 4/6] build: musl cross-build hooks for tokenizers-cpp
 
 When a toolchain file sets LITERTLM_MUSL_HOOK_DIR, add two ExternalProject
 steps to tokenizers-cpp_external:

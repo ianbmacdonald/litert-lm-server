@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Ian MacDonald <ian@netstatz.com>
 Date: Sat, 31 Oct 2026 00:51:56 -0400
-Subject: [PATCH 2/5] build: CPU-only LiteRT, no NPU vendor SDKs
+Subject: [PATCH 2/6] build: CPU-only LiteRT, no NPU vendor SDKs
 
 v0.19.0 hard-codes -DLITERT_ENABLE_NPU=ON -DLITERT_ENABLE_QUALCOMM=ON for
 LiteRT. With NPU on, LiteRT's vendors/ subdirectory downloads the Qualcomm
