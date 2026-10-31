@@ -1,7 +1,8 @@
 # litert-lm-server: external sources
 
 Everything the musl build (`musl/build-musl.sh`, LiteRT-LM v0.19.0 CMake road) fetches, as
-resolved in the validated x86_64 build on 2026-10-31 (`git rev-parse HEAD` of every checkout in the
+resolved in the validated x86_64 and aarch64 builds on 2026-10-31 (identical except the two
+arch-specific archives noted) (`git rev-parse HEAD` of every checkout in the
 build tree, plus the URL of every archive download). Statically linked unless noted. The server
 itself vendors two headers: `third_party/httplib.h` (cpp-httplib, MIT) and `third_party/json.hpp`
 (nlohmann/json, MIT).
@@ -63,8 +64,8 @@ lines, no SDK code). `bundle` refuses a binary carrying vendor SDK symbols.
 | farmhash | https://github.com/google/farmhash | `0d859a811870d10f53a594927d0d0b97573ad06d` | MIT |
 | fft2d (Ooura) | https://storage.googleapis.com/mirror.tensorflow.org/github.com/petewarden/OouraFFT/archive/v1.0.tar.gz | archive | Ooura permissive |
 | ml_dtypes (+ its Eigen submodule `7bf2968f`) | https://github.com/jax-ml/ml_dtypes | `00d98cd92ade342fef589c0470379abb27baebe9` | Apache-2.0, MPL-2.0 |
-| ARM_NEON_2_x86_SSE (headers) | https://storage.googleapis.com/mirror.tensorflow.org/github.com/intel/ARM_NEON_2_x86_SSE/archive/a15b489e1222b2087007546b4912e21293ea86ff.tar.gz | archive | BSD-2-Clause |
-| KleidiAI (aarch64 only) | see the aarch64 notes below | | Apache-2.0 |
+| ARM_NEON_2_x86_SSE (headers; x86_64 only) | https://storage.googleapis.com/mirror.tensorflow.org/github.com/intel/ARM_NEON_2_x86_SSE/archive/a15b489e1222b2087007546b4912e21293ea86ff.tar.gz | archive | BSD-2-Clause |
+| KleidiAI (aarch64 only; linked by patch 0006) | https://gitlab.arm.com/kleidi/kleidiai/-/archive/4bc7bd457930de119f8b826ecfdebfbd9c08cf8c/kleidiai-4bc7bd457930de119f8b826ecfdebfbd9c08cf8c.zip | archive `4bc7bd45` | Apache-2.0 (BSD-3-Clause for its third_party/) |
 
 ## Rust crates (crates.io)
 
@@ -94,7 +95,7 @@ ExternalProjects (LiteRT, TFLite, RE2, tokenizers-cpp) have an `UPDATE_COMMAND` 
    superbuild's own clones, its `git fetch origin <commit>` update steps and the submodules all go
    through it unchanged. Each mirror must contain the pinned commit (a `git clone --mirror`
    does).
-2. **Archive downloads (antlr jar, json zip, pthreadpool, FP16, fft2d, neon2sse):** FetchContent and
+2. **Archive downloads (antlr jar, json zip, pthreadpool, FP16, fft2d, neon2sse, kleidiai):** FetchContent and
    ExternalProject skip the download when the file is already in their download directory with the
    expected name; pre-seed those paths, or mirror the URLs with an HTTP proxy. TFLite's modules also
    honour `-DOVERRIDABLE_FETCH_CONTENT_<name>_...`-style overrides, but those must reach TFLite's
