@@ -1,0 +1,45 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ian MacDonald <ian@netstatz.com>
+Date: Sat, 31 Oct 2026 01:08:05 -0400
+Subject: [PATCH 5/5] build: no shallow clone of commit-pinned FetchContent
+ sources
+
+ANTLR (7d577039), MiniZip (aee7fbdd) and Minja (021c2293) are pinned to
+commits but declared GIT_SHALLOW true. A shallow clone fetches only the
+branch tip, so once the pinned commit is no longer the tip the checkout
+fails ("fatal: unable to read tree (7d5770395bb7...)"); ANTLR already
+fails this way for v0.19.0. Clone them in full, as stb and zlib are.
+
+Assisted-by: claude:opus-5.5
+---
+ cmake/modules/fetch_content.cmake | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/cmake/modules/fetch_content.cmake b/cmake/modules/fetch_content.cmake
+index cff5b5c3..f6d057ed 100644
+--- a/cmake/modules/fetch_content.cmake
++++ b/cmake/modules/fetch_content.cmake
+@@ -24,7 +24,6 @@ FetchContent_Declare(
+   antlr_lib
+   GIT_REPOSITORY https://github.com/antlr/antlr4.git
+   GIT_TAG ${LITERTLM_ANTLR_TAG}
+-  GIT_SHALLOW true
+   SOURCE_SUBDIR runtime/Cpp
+   PATCH_COMMAND 
+     ${CMAKE_COMMAND} 
+@@ -157,7 +156,6 @@ FetchContent_Declare(
+   minizip_lib
+   GIT_REPOSITORY https://github.com/domoticz/minizip
+   GIT_TAG ${LITERTLM_MINIZIP_TAG}
+-  GIT_SHALLOW true
+   SOURCE_DIR ${LITERTLM_MINIZIP_SRC_DIR}
+ )
+ block()
+@@ -175,7 +173,6 @@ FetchContent_Declare(
+   minja_lib
+   GIT_REPOSITORY https://github.com/google/minja
+   GIT_TAG ${LITERTLM_MINJA_TAG}
+-  GIT_SHALLOW true
+   SOURCE_DIR ${LITERTLM_MINJA_SRC_DIR}
+   PATCH_COMMAND ${CMAKE_COMMAND} -DTARGET_FILE=${LITERTLM_MINJA_SRC_DIR}/CMakeLists.txt -P${LITERTLM_PATCHES_DIR}/minja_patch.cmake
+ )

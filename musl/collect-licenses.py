@@ -240,6 +240,9 @@ def main():
     c.add("msgpack-c (tokenizers-cpp submodule)", "tokenizers-cpp-msgpack", os.path.join(tok, "msgpack"), "BSL-1.0")
     c.add("OpenCL headers", "opencl-headers", os.path.join(ext, "opencl_headers", "src", "opencl_headers_external"),
           "Apache-2.0", note="headers")
+    sint = os.path.join(lrb, "safeint-src")
+    if os.path.isdir(sint):  # LiteRT >= the v0.19 pin: header-only, compiled into LiteRT's ops
+        c.add("SafeInt (LiteRT)", "safeint", sint, "MIT", note="header-only")
     c.add("ANTLR4 C++ runtime", "antlr4-runtime", os.path.join(inner, "_deps", "antlr_lib-src"), "BSD-3-Clause")
     c.add("kissfft", "kissfft", os.path.join(tp, "kissfft"), "BSD-3-Clause",
           extra=["LICENSES/BSD-3-Clause", "LICENSES/Unlicense"], note="shipped as lib/libkissfft-float.so.131")

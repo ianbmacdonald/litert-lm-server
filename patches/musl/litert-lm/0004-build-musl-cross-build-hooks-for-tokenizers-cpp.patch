@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ian MacDonald <ian@netstatz.com>
+Date: Sat, 31 Oct 2026 00:52:39 -0400
+Subject: [PATCH 4/5] build: musl cross-build hooks for tokenizers-cpp
+
+When a toolchain file sets LITERTLM_MUSL_HOOK_DIR, add two ExternalProject
+steps to tokenizers-cpp_external:
+- after patch, delete tokenizers-cpp's hard-coded aarch64-unknown-linux-gnu
+  cargo target (it names a nonexistent aarch64-unknown-linux-gnu-gcc);
+- between build and install, run 05-tokenizers-c-musl.sh from the hook
+  directory, which rebuilds libtokenizers_c.a for <arch>-unknown-linux-musl.
+  tokenizers-cpp picks no cargo --target for a generic Linux cross build, so
+  its archive is otherwise built for the host glibc triple.
+Without LITERTLM_MUSL_HOOK_DIR nothing changes.
+
+Assisted-by: claude:opus-5.5
+---
+ cmake/packages/tokenizers/tokenizers.cmake | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/cmake/packages/tokenizers/tokenizers.cmake b/cmake/packages/tokenizers/tokenizers.cmake
+index 54af0bce..eca8fd60 100644
+--- a/cmake/packages/tokenizers/tokenizers.cmake
++++ b/cmake/packages/tokenizers/tokenizers.cmake
+@@ -100,6 +100,27 @@ ExternalProject_Add(
+ 
+ )
+ 
++# musl cross build: hooks from the directory a toolchain file names in LITERTLM_MUSL_HOOK_DIR.
++if(DEFINED LITERTLM_MUSL_HOOK_DIR)
++  # tokenizers-cpp hard-codes cargo --target aarch64-unknown-linux-gnu (with a nonexistent
++  # aarch64-unknown-linux-gnu-gcc) whenever CMAKE_SYSTEM_PROCESSOR is aarch64. Drop that line so
++  # it builds for the host triple as it does on x86_64; the rebuild step below retargets it.
++  ExternalProject_Add_Step(tokenizers-cpp_external musl_no_gnu_cargo_target
++    DEPENDEES patch
++    DEPENDERS configure
++    WORKING_DIRECTORY <SOURCE_DIR>
++    COMMAND sed -i /CARGO_TARGET.aarch64-unknown-linux-gnu/d CMakeLists.txt
++    COMMENT "[musl] Dropping tokenizers-cpp's aarch64-unknown-linux-gnu cargo target")
++  # tokenizers-cpp passes no cargo --target for a generic Linux cross build, so
++  # libtokenizers_c.a (and the oniguruma the onig crate compiles) comes out for the host glibc
++  # triple and fails to link (undefined __memcpy_chk). Rebuild it for the musl target.
++  ExternalProject_Add_Step(tokenizers-cpp_external musl_rebuild_tokenizers_c
++    DEPENDEES build
++    DEPENDERS install
++    COMMAND "${LITERTLM_MUSL_HOOK_DIR}/05-tokenizers-c-musl.sh" "<SOURCE_DIR>" "<BINARY_DIR>"
++    COMMENT "[musl] Rebuilding libtokenizers_c.a for the musl target")
++endif()
++
+ # Do not generate target map for tokenizers-cpp.
+ # This project builds internal projects that have not been disabled.
+ 

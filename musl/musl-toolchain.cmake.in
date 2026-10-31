@@ -17,5 +17,5 @@ set(Rust_CARGO_TARGET @ARCH@-unknown-linux-musl CACHE STRING "")
 # LiteRT otherwise tries to build its own host flatc inside a cross build and fails; reuse the one
 # the prebuild phase already built for the host.
 set(TFLITE_HOST_TOOLS_DIR @BUILD_DIR@/prebuild/build/external/flatbuffers/install/bin CACHE PATH "")
-# Read by 07-musl-post-step-hooks.patch.
+# Read by patches/musl/litert-lm/0004-build-musl-cross-build-hooks-for-tokenizers-cpp.patch.
 set(LITERTLM_MUSL_HOOK_DIR @TOOLCHAIN_DIR@)

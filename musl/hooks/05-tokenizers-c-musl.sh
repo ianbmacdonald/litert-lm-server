@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ExternalProject step on tokenizers-cpp_external (wired by 07-musl-post-step-hooks.patch), after
+# ExternalProject step on tokenizers-cpp_external (wired by patches/musl/litert-lm/0004-build-musl-cross-build-hooks-for-tokenizers-cpp.patch), after
 # build. tokenizers-cpp picks no cargo --target for a generic Linux cross build, so
 # libtokenizers_c.a (and the oniguruma the onig crate builds through the cc crate) comes out for
 # the HOST glibc triple and later fails to link (undefined __memcpy_chk). Rebuild the same crate

@@ -7,9 +7,9 @@
 #   preflight  tools, rust musl target, staging tree layout
 #   jre        pinned Temurin 17 JRE (ANTLR code generation needs java)
 #   toolchain  render compiler wrappers, CMake toolchain file and hook env into <work>/toolchain
-#   source     clone LiteRT-LM at the pinned tag, verify the commit, apply patches/0*.patch
+#   source     clone LiteRT-LM at the pinned tag, verify the commit, apply patches/musl/litert-lm/*.patch
 #   configure  cmake the LiteRT-LM superbuild with the musl toolchain
-#   build      make the superbuild (hooks 03 and 05 run inside it as ExternalProject steps)
+#   build      make the superbuild (hook 05 runs inside it as an ExternalProject step)
 #   server     compile server.cpp and link it with litert_lm_main's whole-archive link line
 #   licenses   collect third-party license files into <work>/licenses
 #   bundle     assemble, verify (readelf) and tar the bundle into <work>/dist
@@ -23,10 +23,12 @@ exec 3>&2
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(dirname "$HERE")
+PATCHES=$REPO/patches/musl/litert-lm
+HOOKS=$HERE/hooks
 
 LITERTLM_REPO=https://github.com/google-ai-edge/LiteRT-LM.git
-LITERTLM_TAG=v0.17.1
-LITERTLM_SHA=5e58e9a0aef7abf7091207a8b1d1063a1c800f08
+LITERTLM_TAG=v0.19.0
+LITERTLM_SHA=771b06e1a2c7f70a399a718599109facf37e38fd
 JRE_URL=https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20.1%2B1/OpenJDK17U-jre_x64_linux_hotspot_17.0.20.1_1.tar.gz
 JRE_SHA256=0b2b640e3046b64c8ec504de0ab9d91bb5610182bda21fad454681ce54d45a62
 EXPECTED_NEEDED="libc.so libgcc_s.so.1 libkissfft-float.so.131 libstdc++.so.6 libz.so.1"
@@ -37,7 +39,7 @@ STAGING=${PRPLOS_STAGING_DIR:-}
 WORK=${MUSL_WORK_DIR:-}
 JOBS=${MUSL_JOBS:-8}
 MEMORY_MAX=${MUSL_MEMORY_MAX:-16G}
-VERSION=${MUSL_BUNDLE_VERSION:-v0.3.0}
+VERSION=${MUSL_BUNDLE_VERSION:-v0.4.0}
 SCOPE=1
 FROM=""
 TO=""
@@ -57,7 +59,7 @@ Options (environment variable in brackets):
   --jobs N          make parallelism, default 8 [MUSL_JOBS]
   --memory-max SZ   MemoryMax for the systemd user scope around heavy steps, default 16G [MUSL_MEMORY_MAX]
   --no-scope        do not wrap heavy steps in systemd-run --user --scope (still nice 19)
-  --version V       bundle version, default v0.3.0 [MUSL_BUNDLE_VERSION]
+  --version V       bundle version, default v0.4.0 [MUSL_BUNDLE_VERSION]
   --from STEP       start at STEP;  --to STEP  stop after STEP;  --only STEP  run only STEP
 EOF
 }
@@ -83,16 +85,15 @@ die() { echo "build-musl.sh: ERROR: $*" >&2; exit 1; }
 [ -n "$STAGING" ] || die "--staging (or PRPLOS_STAGING_DIR) is required"
 [ -n "$WORK" ] || die "--work (or MUSL_WORK_DIR) is required"
 case "$JOBS" in ''|*[!0-9]*) die "--jobs must be a number" ;; esac
-[ "$JOBS" -le 8 ] || echo "build-musl.sh: warning: --jobs $JOBS is above the 8 this recipe was validated with" >&2
+[ "$JOBS" -le 12 ] || echo "build-musl.sh: warning: --jobs $JOBS is above the 12 this recipe was validated with" >&2
 for s in $FROM $TO $ONLY; do case " $STEPS " in *" $s "*) ;; *) die "unknown step $s (steps: $STEPS)" ;; esac; done
 
 STAGING=$(cd "$STAGING" 2>/dev/null && pwd) || die "staging dir does not exist"
 mkdir -p "$WORK"
 WORK=$(cd "$WORK" && pwd)
 case "$ARCH" in
-    x86_64) SDK_TARGET=x86_64 ROOTFS_NAME=root-x86 CPU_FLAGS="" ARCH_PATCHES=() ;;
-    aarch64) SDK_TARGET=aarch64_cortex-a53 ROOTFS_NAME=root-qualcommax CPU_FLAGS=" -march=armv8-a+crc -mtune=cortex-a53"
-        ARCH_PATCHES=("$HERE"/patches/aarch64/*.patch) ;;
+    x86_64) SDK_TARGET=x86_64 ROOTFS_NAME=root-x86 CPU_FLAGS="" ;;
+    aarch64) SDK_TARGET=aarch64_cortex-a53 ROOTFS_NAME=root-qualcommax CPU_FLAGS=" -march=armv8-a+crc -mtune=cortex-a53" ;;
     *) die "--arch must be x86_64 or aarch64" ;;
 esac
 CROSS=$ARCH-openwrt-linux-musl
@@ -195,7 +196,7 @@ step_toolchain() {
     render -e "s#@TOOL@#g++#g" "$HERE/wrap/musl-cc.in" > "$TOOLCHAIN/musl-g++"
     render "$HERE/musl-toolchain.cmake.in" > "$TOOLCHAIN/musl-toolchain.cmake"
     cat > "$TOOLCHAIN/musl-env.sh" <<EOF
-# Rendered by build-musl.sh; sourced by the 03/05 hook steps.
+# Rendered by build-musl.sh; sourced by the 05 hook step.
 export STAGING_DIR=$STAGING
 export PATH=$WORK/jre/bin:$HOME/.cargo/bin:\$PATH
 MUSL_CC=$TOOLCHAIN/musl-gcc
@@ -204,8 +205,7 @@ MUSL_AR=$TC_BIN/$CROSS-ar
 MUSL_NM=$TC_BIN/$CROSS-nm
 MUSL_JOBS=4
 EOF
-    cp "$HERE/patches/03-stage-tflite-archives.sh" "$HERE/patches/05-tokenizers-c-musl.sh" \
-       "$HERE/patches/tokenizers-c.Cargo.lock" "$TOOLCHAIN/"
+    cp "$HOOKS/05-tokenizers-c-musl.sh" "$HOOKS/tokenizers-c.Cargo.lock" "$TOOLCHAIN/"
     chmod +x "$TOOLCHAIN/musl-gcc" "$TOOLCHAIN/musl-g++" "$TOOLCHAIN"/0*.sh
     echo 'int main(void){return 0;}' > "$TOOLCHAIN/probe.c"
     "$TOOLCHAIN/musl-gcc" -o "$TOOLCHAIN/probe" "$TOOLCHAIN/probe.c" -lz || die "musl-gcc wrapper cannot link a probe against -lz"
@@ -224,7 +224,7 @@ step_source() {
     head=$(git -C "$SRC" rev-parse HEAD)
     [ "$head" = "$LITERTLM_SHA" ] || die "LiteRT-LM $LITERTLM_TAG resolved to $head, expected $LITERTLM_SHA"
     local p
-    for p in "$HERE"/patches/0*.patch "${ARCH_PATCHES[@]}"; do
+    for p in "$PATCHES"/*.patch; do
         if git -C "$SRC" apply --reverse --check "$p" 2>/dev/null; then
             echo "already applied: ${p##*/}"
         else
@@ -242,14 +242,20 @@ step_source() {
 }
 
 patchset_hash() {
-    (cd "$HERE" && sha256sum patches/0* "${ARCH_PATCHES[@]#"$HERE"/}" patches/tokenizers-c.Cargo.lock musl-toolchain.cmake.in wrap/*.in)
+    (cd "$REPO" && sha256sum patches/musl/litert-lm/*.patch musl/hooks/* musl/musl-toolchain.cmake.in musl/wrap/*.in)
 }
 
+# LiteRT-LM >= 0.19 takes the prebuild (host protoc/flatc) compilers from LITERTLM_CC/CXX and the
+# target compilers from LITERTLM_CC_NDK/CXX_NDK; without them both phases use the toolchain file's
+# musl compilers and the host tools cannot run (flatc: not found).
 step_configure() {
     if [ -f "$BUILD/Makefile" ] && [ -f "$WORK/stamps/configure" ]; then echo "configured already"; return 0; fi
     mkdir -p "$BUILD"
     cmake -S "$SRC" -B "$BUILD" -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN/musl-toolchain.cmake" || die "cmake configure failed"
+        -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN/musl-toolchain.cmake" -DENABLE_CCACHE=OFF \
+        -DLITERTLM_CC="$(command -v cc)" -DLITERTLM_CXX="$(command -v c++)" \
+        -DLITERTLM_CC_NDK="$TOOLCHAIN/musl-gcc" -DLITERTLM_CXX_NDK="$TOOLCHAIN/musl-g++" \
+        || die "cmake configure failed"
     touch "$WORK/stamps/configure"
 }
 
@@ -272,9 +278,9 @@ step_server() {
 import re, sys
 link, out = sys.argv[1], sys.argv[2]
 cmd = open(link).read().strip()
-obj = " CMakeFiles/litert_lm_main.dir/runtime/engine/litert_lm_main.cc.o "
-assert cmd.count(obj) == 1, "main object not found once in link.txt"
-cmd = cmd.replace(obj, f" {out}/server.o ")
+objs = re.findall(r" CMakeFiles/litert_lm_main\.dir/\S*litert_lm_main\.cc\.o(?= )", cmd)
+assert len(objs) == 1, f"main object not found once in link.txt: {objs}"
+cmd = cmd.replace(objs[0], f" {out}/server.o")
 assert cmd.count(" -o litert_lm_main ") == 1, "output name not found once in link.txt"
 cmd = cmd.replace(" -o litert_lm_main ", f" -o {out}/litert-lm-server ")
 cmd = re.sub(r" -Wl,--dependency-file=\S+", "", cmd)
@@ -294,7 +300,7 @@ PY
 
 step_licenses() {
     python3 "$HERE/collect-licenses.py" --repo "$REPO" --src "$SRC" --build "$BUILD" \
-        --lockfile "$HERE/patches/tokenizers-c.Cargo.lock" --out "$WORK/licenses" \
+        --lockfile "$HOOKS/tokenizers-c.Cargo.lock" --out "$WORK/licenses" \
         --rust-target "$RUST_TARGET" --arch "$ARCH" || die "license collection failed"
 }
 
@@ -335,15 +341,16 @@ step_bundle() {
     done
     { readelf_evidence "$b/bin/litert-lm-server"; readelf_evidence "$b/lib/$KISSFFT_SONAME"; } > "$DIST/readelf-$NAME.txt"
 
-    # CPU-only (patch 08): nothing compiled from an NPU vendor SDK may reach the binary.
-    "$TC_BIN/$CROSS-nm" -C "$OUT/litert-lm-server" > "$DIST/nm.txt" || die "nm failed"
-    strings -a "$b/bin/litert-lm-server" > "$DIST/strings.txt" || die "strings failed"
-    # cpuinfo's ARM chipset-name table holds the bare string "Exynos "; it is not vendor SDK code.
-    cat "$DIST/nm.txt" "$DIST/strings.txt" | grep -v -x -F 'Exynos ' > "$DIST/symbols-and-strings.txt"
-    rm -f "$DIST/nm.txt" "$DIST/strings.txt"
-    if grep -i -E 'qairt|exynos|litecore' "$DIST/symbols-and-strings.txt" > "$DIST/vendor-sdk-hits.txt" || \
-       grep -E 'Qnn[A-Z]|NeuronAdapter|graph_wrapper_api|graphgen_c' "$DIST/symbols-and-strings.txt" >> "$DIST/vendor-sdk-hits.txt"; then
-        die "vendor SDK symbols/strings in the binary (see $DIST/vendor-sdk-hits.txt)"
+    # CPU-only (patch 0002): nothing compiled from an NPU vendor SDK may reach the binary. Since
+    # v0.19 LiteRT's core runtime carries its own (Apache-2.0) per-vendor option setters
+    # (LrtQualcommOptions*, LrtSamsungOptions*) and their help strings, which name QAIRT, QNN
+    # libraries and Exynos; those are not SDK code. The check therefore looks for the SDK's own
+    # API symbols (QNN C API Qnn<Area>_<fn>, QnnInterface_*, MediaTek Neuron*_, Samsung ENN) in
+    # the symbol table, defined or undefined.
+    "$TC_BIN/$CROSS-nm" -C "$OUT/litert-lm-server" > "$DIST/symbols-and-strings.txt" || die "nm failed"
+    if grep -E '[ _](Qnn[A-Z][A-Za-z]*_[A-Za-z]+|QnnInterface|Neuron[A-Z][A-Za-z]*_[A-Za-z]+|NeuronAdapter|graph_wrapper_api|graphgen_c|Enn[A-Z][A-Za-z]*)\b' \
+        "$DIST/symbols-and-strings.txt" > "$DIST/vendor-sdk-hits.txt"; then
+        die "vendor SDK symbols in the binary (see $DIST/vendor-sdk-hits.txt)"
     fi
     rm -f "$DIST/symbols-and-strings.txt" "$DIST/vendor-sdk-hits.txt"
 
@@ -351,7 +358,7 @@ step_bundle() {
     bin_sha=$(sha256sum "$b/bin/litert-lm-server" | cut -d' ' -f1)
     kiss_sha=$(sha256sum "$b/lib/$KISSFFT_SONAME" | cut -d' ' -f1)
     srv_rev=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo unknown)
-    srv_dirty=$(git -C "$REPO" status --porcelain -- server.cpp third_party musl 2>/dev/null | wc -l)
+    srv_dirty=$(git -C "$REPO" status --porcelain -- server.cpp litert_lm_compat.h third_party musl patches 2>/dev/null | wc -l)
     {
         echo "# $NAME — build manifest"
         echo
@@ -370,9 +377,8 @@ step_bundle() {
             echo "| ${d#$INNER/} | $(git -C "$(dirname "$d")" rev-parse HEAD 2>/dev/null || echo '?') |" | sed 's#/.git |# |#'
         done
         echo
-        echo "TensorFlow is pinned to e511b24d67413f9e28d56457c026689e45c95a03 and LiteRT to"
-        echo "876bb8d5b5dd2d69d89797d9b49d52565f046ae5 by patch 02 (LiteRT-LM v0.17.1 tracks their moving"
-        echo "master/main branches). tokenizers-cpp, re2, stb and zlib are pinned by patch 06."
+        echo "LiteRT-LM $LITERTLM_TAG pins TensorFlow, tokenizers-cpp, stb and the tagged dependencies itself;"
+        echo "patch 0001 pins the three it leaves on moving branches: LiteRT, RE2 and zlib."
         echo
         echo "## Toolchain"
         echo
@@ -383,9 +389,9 @@ step_bundle() {
         echo "- JRE for ANTLR: Temurin 17.0.20.1+1 (sha256 $JRE_SHA256)"
         echo "- build host: $(uname -srm)"
         echo
-        echo "## Patches (musl/patches)"
+        echo "## Patches (patches/musl/litert-lm) and hooks (musl/hooks)"
         echo
-        for d in "$HERE"/patches/0* "${ARCH_PATCHES[@]}" "$HERE"/patches/tokenizers-c.Cargo.lock; do echo "- \`${d##*/}\` sha256 $(sha256sum "$d" | cut -d' ' -f1)"; done
+        for d in "$PATCHES"/*.patch "$HOOKS"/*; do echo "- \`${d##*/}\` sha256 $(sha256sum "$d" | cut -d' ' -f1)"; done
         echo
         echo "## Binary"
         echo

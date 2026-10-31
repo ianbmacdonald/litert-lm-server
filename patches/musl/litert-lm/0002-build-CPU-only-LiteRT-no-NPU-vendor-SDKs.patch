@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ian MacDonald <ian@netstatz.com>
+Date: Sat, 31 Oct 2026 00:51:56 -0400
+Subject: [PATCH 2/5] build: CPU-only LiteRT, no NPU vendor SDKs
+
+v0.19.0 hard-codes -DLITERT_ENABLE_NPU=ON -DLITERT_ENABLE_QUALCOMM=ON for
+LiteRT. With NPU on, LiteRT's vendors/ subdirectory downloads the Qualcomm
+QAIRT and Samsung LiteCore SDK headers at configure time and builds the vendor
+dispatch libraries. Turn NPU, Qualcomm and Samsung off (LiteRT then skips
+vendors/ entirely) and generate build_config.h with
+LITERT_BUILD_CONFIG_DISABLE_NPU=1 so the runtime matches.
+
+The committed litert_litert_lm_target_map.cmake names the 17 Qualcomm and
+Samsung vendor archives, and the build-time regeneration of that map never
+runs (tflite.cmake force-sets the LITERTLM_GENERATE_TARGET_MAP cache entry
+OFF inside a block(), which does not scope cache entries, before litert.cmake
+reads it). Drop those archives from the map so litert_lm_main does not ask
+for them ("No rule to make target .../libqnn_backends.a").
+
+Assisted-by: claude:opus-5.5
+---
+ cmake/packages/litert/litert.cmake              |  6 ++++--
+ .../litert/litert_litert_lm_target_map.cmake    | 17 -----------------
+ 2 files changed, 4 insertions(+), 19 deletions(-)
+
+diff --git a/cmake/packages/litert/litert.cmake b/cmake/packages/litert/litert.cmake
+index 2312880f..f0c54aca 100644
+--- a/cmake/packages/litert/litert.cmake
++++ b/cmake/packages/litert/litert.cmake
+@@ -88,6 +88,7 @@ include(ExternalProject)
+         "-DLITERTLM_HOST_PROTOC=${LITERTLM_HOST_PROTOC}"
+         "-DLITERTLM_HOST_FLATC_BIN_DIR=${LITERTLM_HOST_FLATC_BIN_DIR}"
+         "-DLITERTLM_HOST_FLATC=${LITERTLM_HOST_FLATC}"
++        -DLITERT_BUILD_CONFIG_DISABLE_NPU_VAL=ON
+         -P "${LITERTLM_LITERT_PACKAGE_DIR}/litert_patcher.cmake"
+ 
+     CMAKE_ARGS
+@@ -184,8 +185,9 @@ include(ExternalProject)
+         -DXNNPACK_SET_VERBOSITY=OFF
+         -DTFLITE_ENABLE_GPU=OFF
+         -DLITERT_ENABLE_GPU=OFF
+-        -DLITERT_ENABLE_NPU=ON
+-        -DLITERT_ENABLE_QUALCOMM=ON
++        -DLITERT_ENABLE_NPU=OFF
++        -DLITERT_ENABLE_QUALCOMM=OFF
++        -DLITERT_ENABLE_SAMSUNG=OFF
+         -DLITERT_DISABLE_KLEIDIAI=ON
+         -DLITERT_BUILD_C_API=ON
+         -DLITERT_BUILD_TOOLS=OFF
+diff --git a/cmake/packages/litert/litert_litert_lm_target_map.cmake b/cmake/packages/litert/litert_litert_lm_target_map.cmake
+index 50afe3bc..8102646f 100644
+--- a/cmake/packages/litert/litert_litert_lm_target_map.cmake
++++ b/cmake/packages/litert/litert_litert_lm_target_map.cmake
+@@ -25,23 +25,6 @@ set(LITERTLM_LITERT_TARGET_MAP
+     "litert::litert_dump=${LITERTLM_LITERT_BUILD_DIR}/tools/liblitert_dump${CMAKE_STATIC_LIBRARY_SUFFIX}"
+     "litert::litert_tensor_utils=${LITERTLM_LITERT_BUILD_DIR}/tools/liblitert_tensor_utils${CMAKE_STATIC_LIBRARY_SUFFIX}"
+     "litert::litert_tool_display=${LITERTLM_LITERT_BUILD_DIR}/tools/liblitert_tool_display${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_backends=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/backends/libqnn_backends${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_builders=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/builders/libqnn_builders${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_dump_graph=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/dump/libqnn_dump_graph${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_common=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/libqnn_common${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_tensor_pool=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/libqnn_tensor_pool${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_transformation=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/transformation/libqnn_transformation${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_flexbuffer_helpers=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/utils/libqnn_flexbuffer_helpers${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_log=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/utils/libqnn_log${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_miscs=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/utils/libqnn_miscs${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_model=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/utils/libqnn_model${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_wrappers=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/core/wrappers/libqnn_wrappers${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_context_binary_info=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/libqnn_context_binary_info${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_manager=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/libqnn_manager${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::qnn_saver_utils=${LITERTLM_LITERT_BUILD_DIR}/vendors/qualcomm/libqnn_saver_utils${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::samsung_ai_litecore_manager=${LITERTLM_LITERT_BUILD_DIR}/vendors/samsung/libsamsung_ai_litecore_manager${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::samsung_soc_model=${LITERTLM_LITERT_BUILD_DIR}/vendors/samsung/libsamsung_soc_model${CMAKE_STATIC_LIBRARY_SUFFIX}"
+-    "litert::samsung_byte_code=${LITERTLM_LITERT_BUILD_DIR}/vendors/samsung/schema/libsamsung_byte_code${CMAKE_STATIC_LIBRARY_SUFFIX}"
+     "litert::litert_gated_delta_net=${LITERTLM_LITERT_BUILD_DIR}/experimental/custom_ops/gated_delta_net/libgated_delta_net${CMAKE_STATIC_LIBRARY_SUFFIX}"  
+     CACHE INTERNAL "Mapping of litert targets"
+ )

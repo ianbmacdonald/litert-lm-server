@@ -1,0 +1,51 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ian MacDonald <ian@netstatz.com>
+Date: Sat, 31 Oct 2026 00:52:17 -0400
+Subject: [PATCH 3/5] build: use the host protoc wherever one is known, with
+ FORCE
+
+protobuf_config.cmake selects the host protoc only in the litert_lm phase and
+with non-FORCE cache sets, so a sub-project that already caches the
+target-built protoc keeps it. In a cross build that protoc cannot run on the
+build host (protoc: not found). Select the host protoc whenever
+LITERTLM_HOST_PROTOC is set, and force the cache entries.
+
+Assisted-by: claude:opus-5.5
+---
+ cmake/packages/protobuf/protobuf_config.cmake | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/cmake/packages/protobuf/protobuf_config.cmake b/cmake/packages/protobuf/protobuf_config.cmake
+index c0f485e1..68857d5f 100644
+--- a/cmake/packages/protobuf/protobuf_config.cmake
++++ b/cmake/packages/protobuf/protobuf_config.cmake
+@@ -44,19 +44,24 @@ set(LITERTLM_PROTOBUF_SHIM_PATH
+   "${LITERTLM_PROTOBUF_PACKAGE_DIR}/protobuf_shim.cmake"
+   CACHE PATH "")
+ 
+-if("${LITERTLM_ORCHESTRATION_PHASE}" STREQUAL "litert_lm")
++if(NOT "${LITERTLM_HOST_PROTOC}" STREQUAL "")
++  # FORCE: a sub-project may already hold the target-built protoc in its cache, which cannot run
++  # on the build host in a cross build.
+   set(LITERTLM_PROTOBUF_BIN_DIR
+     "${LITERTLM_HOST_PROTOC_BIN_DIR}"
+-    CACHE PATH "Protobuf binary directory")
++    CACHE PATH "Protobuf binary directory" FORCE)
+   set(LITERTLM_PROTOC_EXECUTABLE
+     "${LITERTLM_HOST_PROTOC}"
+-    CACHE PATH "Host protoc")
++    CACHE PATH "Host protoc" FORCE)
+   set(LITERTLM_PROTOC_EXE
+     "${LITERTLM_HOST_PROTOC}"
+-    CACHE PATH "")
++    CACHE PATH "" FORCE)
++  set(LITERTLM_PROTOBUF_PROTOC_EXECUTABLE
++    "${LITERTLM_HOST_PROTOC}"
++    CACHE PATH "Host protoc" FORCE)
+   set(protobuf_generate_PROTOC_EXE
+       "${LITERTLM_HOST_PROTOC}"
+-      CACHE PATH "Host protoc for generator module")
++      CACHE PATH "Host protoc for generator module" FORCE)
+ else()
+   set(LITERTLM_PROTOBUF_BIN_DIR
+     "${LITERTLM_PROTOBUF_INSTALL_PREFIX}/bin"

@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Ian MacDonald <ian@netstatz.com>
+Date: Sat, 31 Oct 2026 00:51:46 -0400
+Subject: [PATCH 1/5] build: pin LiteRT, RE2 and zlib to commits
+
+v0.19.0 fetches LiteRT main, RE2 main and zlib master, so the release does
+not build reproducibly. Pin each to its branch head as of the release commit
+(2026-10-28T23:05:58Z): LiteRT 4873c048, RE2 2da00568, zlib da607da7.
+
+Assisted-by: claude:opus-5.5
+---
+ cmake/modules/fetch_content.cmake  | 5 +++--
+ cmake/packages/litert/litert.cmake | 3 ++-
+ cmake/packages/re2/re2.cmake       | 3 ++-
+ 3 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/cmake/modules/fetch_content.cmake b/cmake/modules/fetch_content.cmake
+index 149d6fa4..cff5b5c3 100644
+--- a/cmake/modules/fetch_content.cmake
++++ b/cmake/modules/fetch_content.cmake
+@@ -256,12 +256,13 @@ endif()
+ 
+ # --- ZLIB ---
+ set(LITERTLM_ZLIB_SRC_DIR ${LITERTLM_THIRD_PARTY_DIR}/zlib CACHE PATH "Path to zlib source directory")
+-set(LITERTLM_ZLIB_TAG "master" CACHE STRING "ZLIB git tag")
++# Pinned for a reproducible build: zlib master as of the v0.19.0 release commit. No GIT_SHALLOW,
++# which cannot check out a commit that is not a branch tip.
++set(LITERTLM_ZLIB_TAG "da607da739fa6047df13e66a2af6b8bec7c2a498" CACHE STRING "ZLIB git tag")
+ FetchContent_Declare(
+   zlib_lib
+   GIT_REPOSITORY https://github.com/madler/zlib
+   GIT_TAG ${LITERTLM_ZLIB_TAG}
+-  GIT_SHALLOW true
+   SOURCE_DIR ${LITERTLM_ZLIB_SRC_DIR}
+ )
+ block()
+diff --git a/cmake/packages/litert/litert.cmake b/cmake/packages/litert/litert.cmake
+index e120bb8a..2312880f 100644
+--- a/cmake/packages/litert/litert.cmake
++++ b/cmake/packages/litert/litert.cmake
+@@ -22,7 +22,8 @@ include("${LITERTLM_FLATBUFFERS_CONFIG_PATH}")
+ include("${LITERTLM_SENTENCEPIECE_CONFIG_PATH}")
+ 
+ set(LITERTLM_LITERT_EXTERNAL_DONE ${LITERTLM_LITERT_STAMP_DIR}/litert_external-done CACHE INTERNAL "")
+-set(LITERTLM_LITERT_TAG "main" CACHE STRING "LiteRT git tag")
++# Pinned for a reproducible build: LiteRT main as of the v0.19.0 release commit (2026-10-28).
++set(LITERTLM_LITERT_TAG "4873c04819d7350b4a53e73458de3010029d3499" CACHE STRING "LiteRT git tag")
+ 
+ include(ExternalProject)
+   if(TARGET fetch_content_complete)
+diff --git a/cmake/packages/re2/re2.cmake b/cmake/packages/re2/re2.cmake
+index 4a45ebc0..cbeb447f 100644
+--- a/cmake/packages/re2/re2.cmake
++++ b/cmake/packages/re2/re2.cmake
+@@ -17,7 +17,8 @@ include("${LITERTLM_RE2_CONFIG_PATH}")
+ include("${LITERTLM_ABSL_CONFIG_PATH}")
+ 
+ setup_external_install_structure("${LITERTLM_RE2_INSTALL_PREFIX}")
+-set(LITERTLM_RE2_TAG "main" CACHE STRING "RE2 git tag")
++# Pinned for a reproducible build: RE2 main as of the v0.19.0 release commit.
++set(LITERTLM_RE2_TAG "2da0056814cf180480a19f5cf811e7e1c054bf6d" CACHE STRING "RE2 git tag")
+ 
+ include(ExternalProject)
+ if(NOT EXISTS "${LITERTLM_RE2_CONFIG_CMAKE_FILE}")
