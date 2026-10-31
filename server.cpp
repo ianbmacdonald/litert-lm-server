@@ -4,8 +4,10 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <deque>
@@ -14,6 +16,8 @@
 #include <random>
 #include <string>
 #include <thread>
+
+#include <pthread.h>
 
 #if defined(__GLIBC__)
 #include <malloc.h>
@@ -644,9 +648,52 @@ void handle_completions(const httplib::Request& req, httplib::Response& res) {
   }
 }
 
+// Blocked before any thread starts, so every thread (the engine's included)
+// inherits the mask and only SignalStop's waiter receives them.
+sigset_t block_stop_signals() {
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, SIGTERM);
+  sigaddset(&set, SIGINT);
+  if (pthread_sigmask(SIG_BLOCK, &set, nullptr) != 0) {
+    std::perror("pthread_sigmask");
+    std::exit(1);
+  }
+  return set;
+}
+
+// In a container the engine is PID 1, where a signal with no handler is
+// ignored, so without this a stop waits out the runtime's SIGKILL timeout.
+class SignalStop {
+ public:
+  SignalStop(httplib::Server& srv, const sigset_t& set) : set_(set) {
+    waiter_ = std::thread([this, &srv] {
+      int sig = 0;
+      sigwait(&set_, &sig);
+      // A signal during startup arrives before listen() binds.
+      while (!srv.is_running() && !done_)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      srv.stop();
+    });
+  }
+  ~SignalStop() {
+    done_ = true;
+    pthread_kill(waiter_.native_handle(), SIGTERM);
+    waiter_.join();
+  }
+  SignalStop(const SignalStop&) = delete;
+  SignalStop& operator=(const SignalStop&) = delete;
+
+ private:
+  sigset_t set_;
+  std::atomic<bool> done_{false};
+  std::thread waiter_;
+};
+
 }  // namespace
 
 int main(int argc, char** argv) {
+  const sigset_t stop_signals = block_stop_signals();
   // Bind loopback by default: this is a backend the lemonade forwarder reaches
   // on the same host. Exposing an unauthenticated inference API to the LAN of a
   // gateway is not a default we want; --host can widen it deliberately.
@@ -817,10 +864,14 @@ int main(int argc, char** argv) {
 
   std::fprintf(stderr, "[litert-lm-server] listening on %s:%d\n", host.c_str(),
                port);
-  if (!svr.listen(host.c_str(), port)) {
-    std::fprintf(stderr, "error: failed to bind %s:%d\n", host.c_str(), port);
-    return 1;
+  {
+    SignalStop signal_stop(svr, stop_signals);
+    if (!svr.listen(host.c_str(), port)) {
+      std::fprintf(stderr, "error: failed to bind %s:%d\n", host.c_str(), port);
+      return 1;
+    }
   }
+  std::fprintf(stderr, "[litert-lm-server] stopping\n");
   litert_lm_engine_delete(g_engine);
   return 0;
 }
