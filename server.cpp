@@ -30,6 +30,10 @@
 #include "conversation.h"
 #define LITERT_LM_STREAM_CHUNK_API 1
 #endif
+// LiteRT-LM >= 0.19 returns a status code from every call (error_reporter.h).
+#if __has_include("error_reporter.h")
+#include "litert_lm_compat.h"
+#endif
 #include "httplib.h"
 #include "json.hpp"
 
